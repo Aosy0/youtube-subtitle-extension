@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="16" fill="#ff0000"/>
+  <rect x="16" y="68" width="96" height="44" rx="4" fill="rgba(0,0,0,0.7)"/>
+  <text x="64" y="100" font-family="Arial, sans-serif" font-size="28" font-weight="bold" fill="white" text-anchor="middle">字幕</text>
+  <circle cx="110" cy="18" r="12" fill="#3ea6ff"/>
+  <text x="110" y="23" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white" text-anchor="middle">+</text>
+</svg>

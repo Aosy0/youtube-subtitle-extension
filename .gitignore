@@ -1,0 +1,51 @@
+# IDE・エディタ設定
+.qwen/
+.claude/
+.vscode/
+debug-profile/
+
+# 環境変数（機密情報）
+.env
+
+# 依存関係
+node_modules/
+
+# ビルド成果物
+dist/
+
+# テスト生成物
+test-results/
+.playwright/
+.playwright-cli/
+
+# リンターキャッシュ
+.ruff_cache/
+
+# デバッグ・テスト用の一時ファイル (拡張子ベース)
+*.py
+*.png
+*.yaml
+*.txt
+!/.env.example
+
+# 拡張機能アセットは無視から除外
+!public/icons/*.png
+
+# 個別デバッグファイル
+debug_popup.html
+test-mcp-interactive.js
+test-timing.js
+inject_test.py
+test_cdp.py
+test_page.py
+run-with-installed-profile.mjs
+initial_load.yaml
+playing_state.yaml
+playing_state_2.yaml
+raw_response.txt
+popup_debug_screenshot.png
+subtitle_debug.png
+test-result-final.png
+test-screenshot.png
+yse-error.png
+*.html
