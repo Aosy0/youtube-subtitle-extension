@@ -24,7 +24,6 @@
     color: #ffffff !important;
     background: rgba(0, 0, 0, 0.75) !important;
     text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8) !important;
-    display: block !important;
     overflow: hidden !important;
     font-family: "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif !important;
 }
