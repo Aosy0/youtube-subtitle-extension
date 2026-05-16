@@ -28,6 +28,8 @@ const PlayerController = {
         Logger.info('プレーヤーが準備完了しました');
         SubtitleEnhancer.init();
         UIController.init();
+        // 優先言語の字幕トラックを選択
+        this.autoSelectSubtitle();
         this.setupVideoChangeListener();
     },
 
@@ -38,6 +40,9 @@ const PlayerController = {
             if (url !== lastUrl) {
                 lastUrl = url;
                 Logger.debug('ページ遷移を検知しました');
+                if (typeof SubtitleEnhancer !== 'undefined' && SubtitleEnhancer.cleanup) {
+                    SubtitleEnhancer.cleanup();
+                }
                 setTimeout(() => this.waitForPlayer(), 1000);
             }
         }).observe(document, {subtree: true, childList: true});

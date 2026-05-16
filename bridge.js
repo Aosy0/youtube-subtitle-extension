@@ -7,21 +7,76 @@
     bridge.style.display = 'none';
     document.documentElement.appendChild(bridge);
 
+    let interceptedSubtitleData = null;
+
+    // ==========================================
+    // XHRインターセプト（YouTubeのtimedtextレスポンスを直接取得）
+    // ==========================================
+    const origOpen = XMLHttpRequest.prototype.open;
+    const origSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function(method, url) {
+        const urlStr = typeof url === 'string' ? url : (url ? String(url) : '');
+        if (urlStr.includes('timedtext')) {
+            console.log('[YSE-BRIDGE] timedtext XHRを検出しました');
+            this.addEventListener('load', function() {
+                console.log('[YSE-BRIDGE] timedtext XHR完了:', this.status, this.responseText?.length || 0);
+                if (this.status === 200 && this.responseText) {
+                    interceptedSubtitleData = this.responseText;
+                    document.dispatchEvent(new CustomEvent('YSE_INTERCEPTED_SUBTITLE', {
+                        detail: { text: this.responseText }
+                    }));
+                }
+            });
+        }
+        return origOpen.apply(this, arguments);
+    };
+
+    // ==========================================
+    // Fetchインターセプト（YouTubeのfetch型timedtextリクエストに対応）
+    // ==========================================
+    const origFetch = window.fetch.bind(window);
+    window.fetch = function(input, init) {
+        const reqUrl = (typeof input === 'string') ? input
+            : (input instanceof Request ? input.url
+            : (input && typeof input.url === 'string' ? input.url : ''));
+        
+        if (reqUrl.includes('timedtext')) {
+            console.log('[YSE-BRIDGE] timedtext fetchを検出しました');
+            return origFetch(input, init).then(async response => {
+                console.log('[YSE-BRIDGE] timedtext fetch完了:', response.status);
+                if (response.ok) {
+                    const clone = response.clone();
+                    try {
+                        const text = await clone.text();
+                        if (text) {
+                            interceptedSubtitleData = text;
+                            document.dispatchEvent(new CustomEvent('YSE_INTERCEPTED_SUBTITLE', {
+                                detail: { text }
+                            }));
+                        }
+                    } catch (_) {}
+                }
+                return response;
+            });
+        }
+        return origFetch(input, init);
+    };
+
+    // ==========================================
+    // playerResponse収集
+    // ==========================================
     function updateData() {
         let playerResponse = null;
         
-        // 1. YouTubeプレーヤーから直接取得
         const player = document.querySelector('#movie_player');
         if (player && typeof player.getPlayerResponse === 'function') {
             try { playerResponse = player.getPlayerResponse(); } catch(e){}
         }
         
-        // 2. グローバル変数からの取得
         if (!playerResponse && window.ytInitialPlayerResponse) {
             playerResponse = window.ytInitialPlayerResponse;
         }
         
-        // 3. その他ytplayerからの取得
         if (!playerResponse && typeof ytplayer !== 'undefined' && ytplayer.config?.args?.player_response) {
             try { 
                 playerResponse = typeof ytplayer.config.args.player_response === 'string' 
@@ -31,7 +86,6 @@
         }
 
         if (playerResponse) {
-            // パフォーマンスのため、大量の動画データを含む全体ではなく captions のみを渡す
             const payload = {
                 captions: playerResponse.captions || null
             };
@@ -39,92 +93,34 @@
         }
     }
 
-    // イベントフックと定期ポーリング
-    window.addEventListener('yt-navigate-finish', updateData);
+    window.addEventListener('yt-navigate-finish', function() {
+        interceptedSubtitleData = null;
+        updateData();
+    });
+    document.addEventListener('yt-navigate-finish', function() {
+        interceptedSubtitleData = null;
+        updateData();
+    });
     window.addEventListener('load', updateData);
     setInterval(updateData, 2000);
     setTimeout(updateData, 500);
 
     // ==========================================
-    // Fetch プロキシ機能（MAINワールドのネットワーク文脈を利用）
+    // Fetch プロキシ（レスポンスインターセプトが効かない場合の冗長パス）
     // ==========================================
-    window.addEventListener('YSE_FETCH_REQUEST', async (e) => {
+    document.addEventListener('YSE_FETCH_REQUEST', async (e) => {
         try {
-            let { url, requestId } = e.detail;
-            
-            // PoT (Proof of Token) の検索と付加
-            if (url.includes('timedtext') && !url.includes('&pot=')) {
-                let pot = null;
-                
-                // 1. ytcfgから直接検索
-                if (typeof ytcfg !== 'undefined' && ytcfg.get) {
-                    pot = ytcfg.get('PO_TOKEN') || 
-                          ytcfg.get('poToken') ||
-                          ytcfg.get('INNERTUBE_CONTEXT')?.client?.poToken ||
-                          ytcfg.get('INNERTUBE_CONTEXT')?.client?.webPlayerContextConfig?.activePoToken ||
-                          ytcfg.get('WEB_PLAYER_CONTEXT_CONFIGS')?.activePoToken;
-                }
-                
-                // 2. ytInitialPlayerResponseの各階層から検索
-                if (!pot && window.ytInitialPlayerResponse) {
-                    const pr = window.ytInitialPlayerResponse;
-                    pot = pr.playerConfig?.apiContext?.webPlayerContextConfig?.activePoToken ||
-                          pr.playerConfig?.apiContext?.webPlayerContextConfig?.jsPlayerContextConfig?.poToken ||
-                          pr.playerConfig?.poToken ||
-                          pr.responseContext?.serviceTrackingParams?.find(p => p.service === 'GFEEDBACK')?.params?.find(p => p.key === 'po_token')?.value;
-                }
-                
-                // 3. ytcfg.data_ を直接スキャン
-                if (!pot && typeof ytcfg !== 'undefined' && ytcfg.data_) {
-                    const scanObj = (obj, depth = 0) => {
-                        if (!obj || depth > 3) return null;
-                        if (typeof obj !== 'object') return null;
-                        for (const key of Object.keys(obj)) {
-                            if ((key.includes('PoToken') || key.includes('po_token') || key.includes('poToken')) && typeof obj[key] === 'string' && obj[key].length > 10) return obj[key];
-                            const found = scanObj(obj[key], depth + 1);
-                            if (found) return found;
-                        }
-                        return null;
-                    };
-                    pot = scanObj(ytcfg.data_);
-                }
-
-                // 4. プレーヤーConfigから検索
-                if (!pot) {
-                    const player = document.querySelector('#movie_player');
-                    if (player && typeof player.getConfig === 'function') {
-                        const cfg = player.getConfig();
-                        pot = cfg?.args?.po_token || cfg?.args?.poToken || cfg?.args?.pot;
-                    }
-                }
-
-                if (pot) {
-                    url += `&pot=${encodeURIComponent(pot)}`;
-                    console.log('[YSE-BRIDGE] PoTトークンを付加しました:', pot.substring(0, 15) + '...');
-                } else {
-                    console.warn('[YSE-BRIDGE] PoTトークンが見つかりません。リクエストが拒否される可能性があります。');
-                }
-            }
-            
+            const { url, requestId } = e.detail;
             const response = await fetch(url, { credentials: 'include' });
             const text = await response.text();
-            
-            window.dispatchEvent(new CustomEvent('YSE_FETCH_RESPONSE', { 
-                detail: { 
-                    requestId,
-                    status: response.status,
-                    statusText: response.statusText,
-                    text: text
-                } 
+            console.log('[YSE-BRIDGE] fetch proxy応答:', response.status, text?.length || 0);
+            document.dispatchEvent(new CustomEvent('YSE_FETCH_RESPONSE', { 
+                detail: { requestId, status: response.status, statusText: response.statusText, text }
             }));
         } catch (err) {
-            window.dispatchEvent(new CustomEvent('YSE_FETCH_RESPONSE', { 
-                detail: { 
-                    requestId: e.detail?.requestId,
-                    error: err.toString()
-                } 
+            document.dispatchEvent(new CustomEvent('YSE_FETCH_RESPONSE', { 
+                detail: { requestId: e.detail?.requestId, error: err.toString() }
             }));
         }
     });
-
 })();

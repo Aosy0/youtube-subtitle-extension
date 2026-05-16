@@ -19,17 +19,17 @@ const SubtitleEnhancer = {
   isFetching: false,
   lastFetchTime: 0,
   fetchErrorCount: 0,
+  fetchBlocked: false,
 
   init() {
     this.createOverlay();
-    this.setupSubtitleStatePolling();
     this.startPolling();
     this.setupEventListeners();
 
     // ブリッジからのインターセプト通知をリッスン
-    window.addEventListener("YSE_INTERCEPTED_SUBTITLE", (e) => {
+    document.addEventListener("YSE_INTERCEPTED_SUBTITLE", (e) => {
       if (e.detail && e.detail.text) {
-        Logger.info("ブリッジからインターセプトされた字幕データを受信しました");
+        Logger.info(`ブリッジからインターセプトされた字幕データを受信しました (${e.detail.text.length}バイト)`);
         try {
           const data = JSON.parse(e.detail.text);
           if (data && data.events) {
@@ -46,6 +46,9 @@ const SubtitleEnhancer = {
 
     // 表示遅延を無くすため、初期化時に字幕データを裏で事前取得しておく
     this.fetchSubtitles();
+
+    // DOM監視（YouTubeの字幕ウィンドウを直接監視）
+    this.setupDomWatch();
 
     Logger.info("字幕エンハンサーを初期化しました");
   },
@@ -67,40 +70,16 @@ const SubtitleEnhancer = {
     attachTimeUpdate();
 
     // ページ遷移（SPA）時に次の動画の取得準備とイベントリスナー再設定を行う
-    window.addEventListener("yt-navigate-finish", () => {
-      // URLが変わったので新しい動画の字幕を事前取得
-      this.fetchSubtitles();
+    document.addEventListener("yt-navigate-finish", () => {
+      // 状態をリセット
+      this.currentVideoId = null;
+      this.captionBlocks = [];
+      this.currentSentence = "";
+      this.isFetching = false;
+      // 新しい動画の字幕を事前取得
+      setTimeout(() => this.fetchSubtitles(), 500);
       setTimeout(attachTimeUpdate, 1000);
     });
-  },
-
-  setupSubtitleStatePolling() {
-    let lastState = false;
-    setInterval(() => {
-      const button = document.querySelector(".ytp-subtitles-button");
-      const isEnabled =
-        button && button.getAttribute("aria-pressed") === "true";
-      if (isEnabled !== lastState) {
-        lastState = isEnabled;
-        if (!isEnabled) {
-          this.hideOverlay();
-          this.hideOriginalCaptions(false);
-          this.lastText = "";
-          this.currentSentence = "";
-          if (this.flushTimer) {
-            clearTimeout(this.flushTimer);
-            this.flushTimer = null;
-          }
-          if (this.debounceTimer) {
-            clearTimeout(this.debounceTimer);
-            this.debounceTimer = null;
-          }
-          Logger.info("字幕がOFFになりました");
-        } else {
-          Logger.info("字幕がONになりました");
-        }
-      }
-    }, 100); // 200ms -> 100msに変更して反応を高速化
   },
 
   createOverlay() {
@@ -188,8 +167,8 @@ const SubtitleEnhancer = {
     this.isSubtitleEnabled =
       button && button.getAttribute("aria-pressed") === "true";
 
-    // 字幕表示状態の切り替えチェック
     if (this.isSubtitleEnabled !== wasEnabled) {
+      Logger.info(`字幕が${this.isSubtitleEnabled ? 'ON' : 'OFF'}になりました`);
     }
 
     if (!this.isSubtitleEnabled) {
@@ -221,13 +200,104 @@ const SubtitleEnhancer = {
 
     if (this.isSubtitleEnabled) {
       this.hideOriginalCaptions(true);
-      this.fetchSubtitles();
+      // DOM監視を常時開始（fetch成否にかかわらずYouTubeの字幕表示を捕捉）
+      this.startDomWatch();
       this.updateDisplayFromTime();
+      if (this.captionBlocks.length === 0 && !this.isFetching && !this.fetchBlocked) {
+        this.fetchSubtitles();
+      }
     } else {
       this.currentCaptionWindow = null;
       this.hideOverlay();
       this.hideOriginalCaptions(false);
+      this.stopDomWatch();
     }
+  },
+
+  startDomWatch() {
+    if (!this.yseCaptionObserver || this.domWatchActive) return;
+    const target = this.getCaptionWindow();
+    if (!target) {
+      // まだcaption windowが存在しない場合はコンテナを監視
+      const container = document.querySelector(".ytp-caption-window-container");
+      if (container) {
+        this.yseCaptionObserver.observe(container, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+        });
+        this.domWatchActive = true;
+        Logger.debug("DOM監視を開始（コンテナ待機中）");
+      }
+      return;
+    }
+    this.yseCaptionObserver.observe(target, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    this.domWatchActive = true;
+    Logger.debug("DOM監視を開始");
+  },
+
+  stopDomWatch() {
+    if (this.yseCaptionObserver && this.domWatchActive) {
+      this.yseCaptionObserver.disconnect();
+      this.domWatchActive = false;
+    }
+  },
+
+  // DOM監視（YouTubeの字幕ウィンドウを直接監視して表示）
+  yseCaptionObserver: null,
+  domWatchActive: false,
+  domWatchLastText: "",
+
+  setupDomWatch() {
+    this.teardownDomWatch();
+    this.yseCaptionObserver = new MutationObserver(() => {
+      if (!this.isSubtitleEnabled) return;
+      const cw = this.getCaptionWindow();
+      if (!cw) return;
+      // 複数の字幕セグメントを結合
+      const segments = cw.querySelectorAll(
+        "span, .ytp-caption-segment, .caption-line"
+      );
+      let text = "";
+      if (segments.length > 0) {
+        const texts = [];
+        for (const seg of segments) {
+          const t = (seg.textContent || "").trim();
+          if (t) texts.push(t);
+        }
+        text = texts.join(" ");
+      } else {
+        text = (cw.textContent || "").trim();
+      }
+      if (text && text !== this.domWatchLastText) {
+        this.domWatchLastText = text;
+        this.domWatchActive = true;
+        this.displaySentence(text);
+      } else if (!text && this.domWatchLastText) {
+        this.domWatchLastText = "";
+        this.hideOverlay();
+      }
+    });
+    // checkStateで開始するまで待機
+  },
+
+  teardownDomWatch() {
+    if (this.yseCaptionObserver) {
+      this.yseCaptionObserver.disconnect();
+      this.yseCaptionObserver = null;
+    }
+    this.domWatchActive = false;
+    this.domWatchLastText = "";
+  },
+
+  getCaptionWindow() {
+    return document.querySelector(
+      ".caption-window, .ytp-caption-window, .ytp-caption-window-top, .ytp-caption-window-bottom"
+    );
   },
 
   async fetchSubtitles() {
@@ -238,17 +308,15 @@ const SubtitleEnhancer = {
     if (this.currentVideoId === videoId && this.captionBlocks.length > 0)
       return;
     if (this.isFetching) return;
+    // PoT失敗が続いたらリトライしない（DOMフォールバックに任せる）
+    if (this.fetchBlocked) return;
 
-    // 前回の試行からのクールダウンを計算（エラーが増えるほど待機時間を延ばす: 3秒 -> 6秒 -> 12秒...最大30秒）
+    // 前回の試行からのクールダウン（3秒〜最大10秒）
     const now = Date.now();
-    const baseCooldown = 3000;
     const currentCooldown =
       this.fetchErrorCount === 0
         ? 0
-        : Math.min(
-            baseCooldown * Math.pow(1.5, this.fetchErrorCount - 1),
-            30000,
-          );
+        : Math.min(3000 * Math.pow(1.5, this.fetchErrorCount - 1), 10000);
 
     if (
       this.currentVideoId === videoId &&
@@ -331,7 +399,7 @@ const SubtitleEnhancer = {
       const fetchBridge = new Promise((resolve, reject) => {
         const handler = (e) => {
           if (e.detail && e.detail.requestId === requestId) {
-            window.removeEventListener("YSE_FETCH_RESPONSE", handler);
+            document.removeEventListener("YSE_FETCH_RESPONSE", handler);
             if (e.detail.error) {
               reject(new Error(e.detail.error));
             } else {
@@ -339,16 +407,16 @@ const SubtitleEnhancer = {
             }
           }
         };
-        window.addEventListener("YSE_FETCH_RESPONSE", handler);
-        window.dispatchEvent(
+        document.addEventListener("YSE_FETCH_RESPONSE", handler);
+        document.dispatchEvent(
           new CustomEvent("YSE_FETCH_REQUEST", { detail: { url, requestId } }),
         );
 
         // タイムアウト設定
         setTimeout(() => {
-          window.removeEventListener("YSE_FETCH_RESPONSE", handler);
+          document.removeEventListener("YSE_FETCH_RESPONSE", handler);
           reject(new Error("Fetch request timeout"));
-        }, 15000);
+        }, 30000);
       });
 
       const response = await fetchBridge;
@@ -420,7 +488,6 @@ const SubtitleEnhancer = {
       }
 
       if (this.captionBlocks.length === 0) {
-        // 解析結果が空の場合も、すぐにリトライしないよう currentVideoId は保持する
         this.fetchErrorCount++;
       } else {
         this.fetchErrorCount = 0;
@@ -429,8 +496,15 @@ const SubtitleEnhancer = {
       Logger.error(
         `字幕データの取得・解析中にエラーが発生しました: ${e.name} - ${e.message}`,
       );
-      // エラー時も動画IDは保持し、クールダウンを強制する
       this.fetchErrorCount++;
+      // PoT不在によるタイムアウト/空レスポンスが複数回続いたらリトライ停止
+      if (
+        this.fetchErrorCount >= 3 &&
+        (e.message.includes("空です") || e.message.includes("timeout") || e.message.includes("Timeout"))
+      ) {
+        this.fetchBlocked = true;
+        Logger.warn("字幕APIが利用できません。DOM監視に完全に切り替えます。");
+      }
     } finally {
       this.isFetching = false;
     }
@@ -538,9 +612,10 @@ const SubtitleEnhancer = {
   },
 
   updateDisplayFromTime() {
-    // fetch中はデータが不完全なので更新しない
     if (this.isFetching) return;
-    if (!this.isSubtitleEnabled || this.captionBlocks.length === 0) {
+    if (!this.isSubtitleEnabled) return;
+    // ブロックデータがない時はDOM監視に任せる
+    if (this.captionBlocks.length === 0) {
       return;
     }
     const video = document.querySelector("video");
@@ -565,7 +640,7 @@ const SubtitleEnhancer = {
     }
   },
 
-  displaySentence(text) {
+    displaySentence(text) {
     if (!this.yseOverlay) return;
     if (!this.isSubtitleEnabled || !text || !text.trim()) {
       this.hideOverlay();
@@ -578,6 +653,8 @@ const SubtitleEnhancer = {
       this.yseOverlay.textContent = text;
     }
     this.yseOverlay.style.setProperty("display", "block", "important");
+    this.yseOverlay.style.removeProperty("visibility");
+    this.yseOverlay.style.removeProperty("opacity");
     this.applyCustomStyles();
 
     Logger.debug("表示文:", text);
@@ -713,8 +790,8 @@ const SubtitleEnhancer = {
     const container = document.querySelector(".ytp-caption-window-container");
     if (container) {
       container.style.setProperty(
-        "display",
-        hide ? "none" : "block",
+        "visibility",
+        hide ? "hidden" : "visible",
         "important",
       );
     }
@@ -727,6 +804,8 @@ const SubtitleEnhancer = {
     this.captionBlocks = [];
     this.currentVideoId = null;
     this.isFetching = false;
+    this.fetchBlocked = false;
+    this.teardownDomWatch();
     this.hideOverlay();
     this.hideOriginalCaptions(false);
     if (this.yseOverlay) {
