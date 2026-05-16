@@ -34,6 +34,10 @@ tests/test-profile/
 # 拡張機能アセットは無視から除外
 !public/icons/*.png
 
+# テスト用デバッグプロファイル
+tests/e2e/debug-profile*/
+tests/e2e/check-pot.mjs
+
 # 個別デバッグファイル
 debug_popup.html
 test-mcp-interactive.js
