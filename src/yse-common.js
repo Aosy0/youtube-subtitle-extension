@@ -107,6 +107,11 @@ const LogPanel = {
     _panel: null,
     _logContainer: null,
 
+    init() {
+        // Initialize if needed
+        return this;
+    },
+
     show() {
         if (this._panel) {
             this._panel.remove();
