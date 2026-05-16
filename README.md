@@ -48,8 +48,10 @@ TampermonkeyスクリプトからChrome拡張機能に移行しました。
 ```
 youtube-subtitle-extension/
 ├── manifest.json          # 拡張機能の設定（Manifest V3）
-├── content.js             # メインスクリプト
+├── content.js             # メイン初期化・メッセージング
 ├── styles.css             # スタイルシート
+├── bridge.js              # メインワールドブリッジ（PoT対応）
+├── yse-common.js          # 共通ユーティリティ（Settings, Logger, LogPanel）
 ├── player-controller.js   # YouTubeプレーヤー制御
 ├── subtitle-enhancer.js   # 字幕表示改善
 ├── youtube-settings.js    # YouTube設定メニュー統合
@@ -63,6 +65,12 @@ youtube-subtitle-extension/
 │   ├── icon16.png         # 16x16 アイコン
 │   ├── icon48.png         # 48x48 アイコン
 │   └── icon128.png        # 128x128 アイコン
+├── public/
+│   └── icons/             # ビルド用アイコンソース
+├── package.json           # npm設定（ビルド・テスト）
+├── vite.config.js         # Viteビルド設定
+├── vitest.config.js       # Vitestテスト設定
+├── tests/                 # テストファイル
 └── README.md              # このファイル
 ```
 
@@ -144,19 +152,42 @@ youtube-subtitle-extension/
 
 ## 開発
 
+### セットアップ
+```bash
+# 依存関係のインストール
+npm install
+```
+
 ### ローカル開発
 ```bash
-# リポジトリのクローン
-git clone <repository-url>
-cd youtube-subtitle-extension
+# 開発サーバー起動
+npm run dev
 
 # Chromeで読み込み
 # chrome://extensions/ → デベロッパーモードON → パッケージ化されていない拡張機能を読み込む
 ```
 
-### ビルド（必要に応じて）
+### ビルド
 ```bash
-# アイコンの生成（ImageMagickを使用）
+# 本番用ビルド
+npm run build
+```
+
+### テスト
+```bash
+# ユニットテスト実行
+npm test
+
+# テスト監視モード
+npm run test:watch
+
+# E2Eテスト実行
+npm run test:e2e
+```
+
+### アイコン生成（必要に応じて）
+```bash
+# ImageMagickを使用
 convert icons/icon.svg -resize 16x16 icons/icon16.png
 convert icons/icon.svg -resize 48x48 icons/icon48.png
 convert icons/icon.svg -resize 128x128 icons/icon128.png
