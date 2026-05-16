@@ -34,6 +34,8 @@ const SubtitleEnhancer = {
           const data = JSON.parse(e.detail.text);
           if (data && data.events) {
             this.captionBlocks = this.parseJson3(data);
+            // ブロックデータが入ったらDOM監視を停止し時間ベース表示に切り替え
+            this.stopDomWatch();
             Logger.info(
               `インターセプトした字幕の解析完了 (ブロック数: ${this.captionBlocks.length})`,
             );
@@ -200,9 +202,14 @@ const SubtitleEnhancer = {
 
     if (this.isSubtitleEnabled) {
       this.hideOriginalCaptions(true);
-      // DOM監視を常時開始（fetch成否にかかわらずYouTubeの字幕表示を捕捉）
-      this.startDomWatch();
-      this.updateDisplayFromTime();
+      if (this.captionBlocks.length > 0) {
+        // ブロックデータがある時は時間ベース表示（DOM監視を停止）
+        this.stopDomWatch();
+        this.updateDisplayFromTime();
+      } else {
+        // ブロックデータがない時はDOM監視でYouTubeの表示を直接読む
+        this.startDomWatch();
+      }
       if (this.captionBlocks.length === 0 && !this.isFetching && !this.fetchBlocked) {
         this.fetchSubtitles();
       }
@@ -251,41 +258,49 @@ const SubtitleEnhancer = {
   yseCaptionObserver: null,
   domWatchActive: false,
   domWatchLastText: "",
+  domWatchTimer: null,
 
   setupDomWatch() {
     this.teardownDomWatch();
     this.yseCaptionObserver = new MutationObserver(() => {
       if (!this.isSubtitleEnabled) return;
-      const cw = this.getCaptionWindow();
-      if (!cw) return;
-      // 複数の字幕セグメントを結合
-      const segments = cw.querySelectorAll(
-        "span, .ytp-caption-segment, .caption-line"
-      );
-      let text = "";
-      if (segments.length > 0) {
-        const texts = [];
-        for (const seg of segments) {
-          const t = (seg.textContent || "").trim();
-          if (t) texts.push(t);
+      // デバウンス: 短時間の連続更新は最後の1回だけ処理
+      if (this.domWatchTimer) clearTimeout(this.domWatchTimer);
+      this.domWatchTimer = setTimeout(() => {
+        this.domWatchTimer = null;
+        const cw = this.getCaptionWindow();
+        if (!cw) return;
+        const segments = cw.querySelectorAll(
+          "span, .ytp-caption-segment, .caption-line"
+        );
+        let text = "";
+        if (segments.length > 0) {
+          const texts = [];
+          for (const seg of segments) {
+            const t = (seg.textContent || "").trim();
+            if (t) texts.push(t);
+          }
+          text = texts.join(" ");
+        } else {
+          text = (cw.textContent || "").trim();
         }
-        text = texts.join(" ");
-      } else {
-        text = (cw.textContent || "").trim();
-      }
-      if (text && text !== this.domWatchLastText) {
-        this.domWatchLastText = text;
-        this.domWatchActive = true;
-        this.displaySentence(text);
-      } else if (!text && this.domWatchLastText) {
-        this.domWatchLastText = "";
-        this.hideOverlay();
-      }
+        if (text && text !== this.domWatchLastText) {
+          this.domWatchLastText = text;
+          this.domWatchActive = true;
+          this.displaySentence(text);
+        } else if (!text && this.domWatchLastText) {
+          this.domWatchLastText = "";
+          this.hideOverlay();
+        }
+      }, 100);
     });
-    // checkStateで開始するまで待機
   },
 
   teardownDomWatch() {
+    if (this.domWatchTimer) {
+      clearTimeout(this.domWatchTimer);
+      this.domWatchTimer = null;
+    }
     if (this.yseCaptionObserver) {
       this.yseCaptionObserver.disconnect();
       this.yseCaptionObserver = null;
@@ -790,8 +805,8 @@ const SubtitleEnhancer = {
     const container = document.querySelector(".ytp-caption-window-container");
     if (container) {
       container.style.setProperty(
-        "visibility",
-        hide ? "hidden" : "visible",
+        "display",
+        hide ? "none" : "block",
         "important",
       );
     }
