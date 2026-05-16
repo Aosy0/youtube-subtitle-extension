@@ -17,6 +17,9 @@ dist/
 test-results/
 .playwright/
 .playwright-cli/
+tests/**/test-profile*/
+tests/test-chrome-profile/
+tests/test-profile/
 
 # リンターキャッシュ
 .ruff_cache/

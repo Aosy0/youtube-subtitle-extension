@@ -56,10 +56,12 @@
             if (url.includes('timedtext') && !url.includes('&pot=')) {
                 let pot = null;
                 
-                // 1. ytcfgから検索
+                // 1. ytcfgから直接検索
                 if (typeof ytcfg !== 'undefined' && ytcfg.get) {
                     pot = ytcfg.get('PO_TOKEN') || 
+                          ytcfg.get('poToken') ||
                           ytcfg.get('INNERTUBE_CONTEXT')?.client?.poToken ||
+                          ytcfg.get('INNERTUBE_CONTEXT')?.client?.webPlayerContextConfig?.activePoToken ||
                           ytcfg.get('WEB_PLAYER_CONTEXT_CONFIGS')?.activePoToken;
                 }
                 
@@ -67,15 +69,32 @@
                 if (!pot && window.ytInitialPlayerResponse) {
                     const pr = window.ytInitialPlayerResponse;
                     pot = pr.playerConfig?.apiContext?.webPlayerContextConfig?.activePoToken ||
-                          pr.playerConfig?.apiContext?.webPlayerContextConfig?.jsPlayerContextConfig?.poToken;
+                          pr.playerConfig?.apiContext?.webPlayerContextConfig?.jsPlayerContextConfig?.poToken ||
+                          pr.playerConfig?.poToken ||
+                          pr.responseContext?.serviceTrackingParams?.find(p => p.service === 'GFEEDBACK')?.params?.find(p => p.key === 'po_token')?.value;
                 }
                 
-                // 3. プレーヤーConfigから検索
+                // 3. ytcfg.data_ を直接スキャン
+                if (!pot && typeof ytcfg !== 'undefined' && ytcfg.data_) {
+                    const scanObj = (obj, depth = 0) => {
+                        if (!obj || depth > 3) return null;
+                        if (typeof obj !== 'object') return null;
+                        for (const key of Object.keys(obj)) {
+                            if ((key.includes('PoToken') || key.includes('po_token') || key.includes('poToken')) && typeof obj[key] === 'string' && obj[key].length > 10) return obj[key];
+                            const found = scanObj(obj[key], depth + 1);
+                            if (found) return found;
+                        }
+                        return null;
+                    };
+                    pot = scanObj(ytcfg.data_);
+                }
+
+                // 4. プレーヤーConfigから検索
                 if (!pot) {
                     const player = document.querySelector('#movie_player');
                     if (player && typeof player.getConfig === 'function') {
                         const cfg = player.getConfig();
-                        pot = cfg?.args?.po_token || cfg?.args?.pot;
+                        pot = cfg?.args?.po_token || cfg?.args?.poToken || cfg?.args?.pot;
                     }
                 }
 
