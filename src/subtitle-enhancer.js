@@ -739,4 +739,3 @@ const SubtitleEnhancer = {
 };
 
 window.SubtitleEnhancer = SubtitleEnhancer;
-export default SubtitleEnhancer;

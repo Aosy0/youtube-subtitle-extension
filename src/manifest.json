@@ -1,0 +1,60 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Subtitle Enhancer",
+  "version": "1.0.1",
+  "description": "YouTube字幕を改善：文単位表示、カスタマイズ可能なスタイル、日本語字幕優先、自動翻訳対応",
+  "permissions": [
+    "storage"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.youtube.com/*",
+        "https://youtube.com/*",
+        "https://youtu.be/*"
+      ],
+      "js": [
+        "bridge.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.youtube.com/*",
+        "https://youtube.com/*",
+        "https://youtu.be/*"
+      ],
+      "js": [
+        "yse-common.js",
+        "player-controller.js",
+        "subtitle-enhancer.js",
+        "youtube-settings.js",
+        "ui-controller.js",
+        "content.js"
+      ],
+      "css": [
+        "styles.css"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "host_permissions": [
+    "https://www.youtube.com/*",
+    "https://youtube.com/*",
+    "https://youtu.be/*"
+  ]
+}
