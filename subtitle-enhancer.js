@@ -608,16 +608,13 @@ const SubtitleEnhancer = {
         i + 1 < deduped.length ? deduped[i + 1].start - endMs : Infinity;
 
       let shouldSplit = false;
-      if (nextGap > 800) {
-        // 時間ギャップが大きい場合は強制分割
+      if (nextGap > 1200) {
         shouldSplit = true;
       } else if (endsWithPunctuation) {
-        // 句読点で終わっている場合、20文字以上あるか2文以上あれば分割
-        if (charCount > 20 || sentenceCount >= 2) {
+        if (sentenceCount >= 2 || charCount > 50) {
           shouldSplit = true;
         }
-      } else if (charCount > 25) {
-        // 句読点がないが、25文字を超えたら強制分割
+      } else if (charCount > 80) {
         shouldSplit = true;
       }
 

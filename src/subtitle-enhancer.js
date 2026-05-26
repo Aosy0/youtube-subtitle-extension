@@ -605,12 +605,14 @@ const SubtitleEnhancer = {
         i + 1 < deduped.length ? deduped[i + 1].start - endMs : Infinity;
 
       let shouldSplit = false;
-      if (nextGap > 800) {
+      if (nextGap > 1200) {
         shouldSplit = true;
       } else if (endsWithPunctuation) {
-        if (charCount > 20 || sentenceCount >= 2) {
+        if (sentenceCount >= 2 || charCount > 50) {
           shouldSplit = true;
         }
+      } else if (charCount > 80) {
+        shouldSplit = true;
       } else if (charCount > 25) {
         shouldSplit = true;
       }
