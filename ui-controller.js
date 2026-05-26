@@ -4,20 +4,41 @@
 const UIController = {
     panel: null,
     isOpen: false,
+    _initialized: false,
+    _keydownHandler: null,
 
     init() {
+        if (this._initialized) {
+            Logger.debug('UIコントローラーは既に初期化済みです');
+            return;
+        }
+        this._initialized = true;
         this.setupKeyboardShortcuts();
         YouTubeSettingsIntegration.init();
         Logger.info('UIコントローラーを初期化しました');
     },
 
     setupKeyboardShortcuts() {
-        document.addEventListener('keydown', (e) => {
+        if (this._keydownHandler) {
+            document.removeEventListener('keydown', this._keydownHandler);
+        }
+        this._keydownHandler = (e) => {
             if (e.altKey && e.key.toLowerCase() === 's') {
                 e.preventDefault();
                 this.toggleSettings();
             }
-        });
+        };
+        document.addEventListener('keydown', this._keydownHandler);
+    },
+
+    cleanup() {
+        if (this._keydownHandler) {
+            document.removeEventListener('keydown', this._keydownHandler);
+            this._keydownHandler = null;
+        }
+        this.closeSettings();
+        this._initialized = false;
+        Logger.info('UIコントローラーをクリーンアップしました');
     },
 
     toggleSettings() {
@@ -73,6 +94,11 @@ const UIController = {
                     this.isOpen = false;
                 }
             }, 200);
+
+            if (this._escHandler) {
+                document.removeEventListener('keydown', this._escHandler);
+                this._escHandler = null;
+            }
 
             Logger.debug('設定パネルを閉じました');
         }
@@ -164,8 +190,8 @@ const UIController = {
 
                 <div class="yse-setting-group">
                     <label class="yse-setting-label">背景色</label>
-                    <input type="text" class="yse-setting-input" data-key="backgroundColor" value="${Settings.get('backgroundColor')}" placeholder="rgba(0, 0, 0, 0.75)">
-                    <small style="color: #888; font-size: 12px;">例: rgba(0, 0, 0, 0.75) または #000000cc</small>
+                    <input type="text" class="yse-setting-input" data-key="backgroundColor" value="${Settings.get('backgroundColor')}" placeholder="rgba(0, 0, 0, 0.50)">
+                    <small style="color: #888; font-size: 12px;">例: rgba(0, 0, 0, 0.50) または #000000cc</small>
                 </div>
 
                 <div class="yse-setting-group">
@@ -293,13 +319,12 @@ const UIController = {
             }
         });
 
-        const escHandler = (e) => {
+        this._escHandler = (e) => {
             if (e.key === 'Escape') {
                 this.closeSettings();
-                document.removeEventListener('keydown', escHandler);
             }
         };
-        document.addEventListener('keydown', escHandler);
+        document.addEventListener('keydown', this._escHandler);
 
         const logPanelBtn = this.panel.querySelector('#yse-open-logpanel');
         if (logPanelBtn) {

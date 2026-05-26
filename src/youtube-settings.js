@@ -3,19 +3,45 @@
 // ============================================
 const YouTubeSettingsIntegration = {
     _menuObserver: null,
+    _popupObserver: null,
 
     init() {
+        if (this._menuObserver) {
+            this._menuObserver.disconnect();
+            this._menuObserver = null;
+        }
+        if (this._popupObserver) {
+            this._popupObserver.disconnect();
+            this._popupObserver = null;
+        }
         this._observeMenu();
         Logger.info('YouTube設定メニュー統合を初期化しました');
     },
 
     _observeMenu() {
+        const popup = document.querySelector('.ytp-settings-menu');
+        if (popup) {
+            this._enhanceMenu(popup);
+            this._observePopup(popup);
+        }
+
+        if (this._menuObserver) {
+            this._menuObserver.disconnect();
+        }
+
         const observer = new MutationObserver((mutations) => {
             for (const mutation of mutations) {
                 for (const node of mutation.addedNodes) {
-                    if (node.nodeType === 1 && node.classList &&
-                        (node.classList.contains('ytp-popup') || node.classList.contains('ytp-settings-menu'))) {
-                        this._enhanceMenu(node);
+                    if (node.nodeType !== 1 || !node.classList) continue;
+                    let target = null;
+                    if (node.classList.contains('ytp-settings-menu')) {
+                        target = node;
+                    } else if (node.classList.contains('ytp-popup')) {
+                        target = node.querySelector('.ytp-settings-menu');
+                    }
+                    if (target) {
+                        this._enhanceMenu(target);
+                        this._observePopup(target);
                     }
                 }
             }
@@ -27,6 +53,32 @@ const YouTubeSettingsIntegration = {
         });
 
         this._menuObserver = observer;
+    },
+
+    _observePopup(popup) {
+        if (popup._yseObserved) return;
+        popup._yseObserved = true;
+
+        if (this._popupObserver) {
+            this._popupObserver.disconnect();
+        }
+
+        const observer = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
+                    if (popup.style.display !== 'none') {
+                        this._enhanceMenu(popup);
+                    }
+                }
+            }
+        });
+
+        observer.observe(popup, {
+            attributes: true,
+            attributeFilter: ['style']
+        });
+
+        this._popupObserver = observer;
     },
 
     _enhanceMenu(menu) {
@@ -52,11 +104,10 @@ const YouTubeSettingsIntegration = {
             if (typeof UIController !== 'undefined') {
                 UIController.openSettings();
             }
-            const closeBtn = menu.querySelector('.ytp-panel-close-button');
-            if (closeBtn) closeBtn.click();
         });
 
         panel.appendChild(item);
+        Logger.debug('拡張設定メニュー項目を追加しました');
     }
 };
 

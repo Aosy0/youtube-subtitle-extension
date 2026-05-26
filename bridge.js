@@ -93,16 +93,18 @@
         }
     }
 
-    window.addEventListener('yt-navigate-finish', function() {
+    let updateInterval = setInterval(updateData, 2000);
+
+    function onNavigate() {
         interceptedSubtitleData = null;
+        if (updateInterval) clearInterval(updateInterval);
+        updateInterval = setInterval(updateData, 2000);
         updateData();
-    });
-    document.addEventListener('yt-navigate-finish', function() {
-        interceptedSubtitleData = null;
-        updateData();
-    });
+    }
+
+    window.addEventListener('yt-navigate-finish', onNavigate);
+    document.addEventListener('yt-navigate-finish', onNavigate);
     window.addEventListener('load', updateData);
-    setInterval(updateData, 2000);
     setTimeout(updateData, 500);
 
     // ==========================================

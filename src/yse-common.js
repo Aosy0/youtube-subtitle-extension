@@ -19,7 +19,7 @@ const CONFIG = {
         fontSize: 24,
         fontFamily: '"Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif',
         fontColor: '#ffffff',
-        backgroundColor: 'rgba(0, 0, 0, 0.75)',
+        backgroundColor: 'rgba(0, 0, 0, 0.50)',
         textShadow: '2px 2px 4px rgba(0, 0, 0, 0.8)',
         position: 'bottom',
         customPositionY: 10,

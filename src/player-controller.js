@@ -3,20 +3,35 @@
 // ============================================
 const PlayerController = {
     player: null,
+    video: null,
     observers: [],
+    _playerCheckInterval: null,
+    _urlObserver: null,
+    _initialized: false,
 
     init() {
+        if (this._initialized) {
+            Logger.debug('プレーヤーコントローラーは既に初期化済みです');
+            return;
+        }
+        this._initialized = true;
         this.waitForPlayer();
         Logger.info('プレーヤーコントローラーを初期化しました');
     },
 
     waitForPlayer() {
-        const checkInterval = setInterval(() => {
+        if (this._playerCheckInterval) {
+            clearInterval(this._playerCheckInterval);
+            this._playerCheckInterval = null;
+        }
+
+        this._playerCheckInterval = setInterval(() => {
             const video = document.querySelector('video');
             const player = document.querySelector('#movie_player');
 
             if (video && player) {
-                clearInterval(checkInterval);
+                clearInterval(this._playerCheckInterval);
+                this._playerCheckInterval = null;
                 this.player = player;
                 this.video = video;
                 this.onPlayerReady();
@@ -34,8 +49,13 @@ const PlayerController = {
     },
 
     setupVideoChangeListener() {
+        if (this._urlObserver) {
+            this._urlObserver.disconnect();
+            this._urlObserver = null;
+        }
+
         let lastUrl = location.href;
-        new MutationObserver(() => {
+        this._urlObserver = new MutationObserver(() => {
             const url = location.href;
             if (url !== lastUrl) {
                 lastUrl = url;
@@ -45,7 +65,22 @@ const PlayerController = {
                 }
                 setTimeout(() => this.waitForPlayer(), 1000);
             }
-        }).observe(document, {subtree: true, childList: true});
+        });
+        this._urlObserver.observe(document, {subtree: true, childList: true});
+    },
+
+    cleanup() {
+        if (this._playerCheckInterval) {
+            clearInterval(this._playerCheckInterval);
+            this._playerCheckInterval = null;
+        }
+        if (this._urlObserver) {
+            this._urlObserver.disconnect();
+            this._urlObserver = null;
+        }
+        this.player = null;
+        this.video = null;
+        Logger.info('プレーヤーコントローラーをクリーンアップしました');
     },
 
     getPlayerConfig() {

@@ -20,14 +20,22 @@ const SubtitleEnhancer = {
   lastFetchTime: 0,
   fetchErrorCount: 0,
   fetchBlocked: false,
+  _listenersAttached: false,
+  _interceptHandler: null,
+  _navigateHandler: null,
+  _timeUpdateHandler: null,
+  _dragMouseMoveHandler: null,
+  _dragMouseUpHandler: null,
 
   init() {
     this.createOverlay();
     this.startPolling();
     this.setupEventListeners();
 
-    // ブリッジからのインターセプト通知をリッスン
-    document.addEventListener("YSE_INTERCEPTED_SUBTITLE", (e) => {
+    if (this._interceptHandler) {
+      document.removeEventListener("YSE_INTERCEPTED_SUBTITLE", this._interceptHandler);
+    }
+    this._interceptHandler = (e) => {
       if (e.detail && e.detail.text) {
         Logger.info(`ブリッジからインターセプトされた字幕データを受信しました (${e.detail.text.length}バイト)`);
         try {
@@ -44,7 +52,8 @@ const SubtitleEnhancer = {
           Logger.error("インターセプトしたデータのパースに失敗:", err);
         }
       }
-    });
+    };
+    document.addEventListener("YSE_INTERCEPTED_SUBTITLE", this._interceptHandler);
 
     // 表示遅延を無くすため、初期化時に字幕データを裏で事前取得しておく
     this.fetchSubtitles();
@@ -55,16 +64,24 @@ const SubtitleEnhancer = {
     Logger.info("字幕エンハンサーを初期化しました");
   },
   setupEventListeners() {
+    if (this._navigateHandler) {
+      document.removeEventListener("yt-navigate-finish", this._navigateHandler);
+    }
+
     // 動画の再生時間更新に合わせて即座に字幕を更新する
+    if (!this._timeUpdateHandler) {
+      this._timeUpdateHandler = () => {
+        if (this.isSubtitleEnabled) {
+          this.updateDisplayFromTime();
+        }
+      };
+    }
+
     const attachTimeUpdate = () => {
       const video = document.querySelector("video");
       if (video && !video.hasAttribute("data-yse-timeupdate")) {
         video.setAttribute("data-yse-timeupdate", "true");
-        video.addEventListener("timeupdate", () => {
-          if (this.isSubtitleEnabled) {
-            this.updateDisplayFromTime();
-          }
-        });
+        video.addEventListener("timeupdate", this._timeUpdateHandler);
       }
     };
 
@@ -72,7 +89,7 @@ const SubtitleEnhancer = {
     attachTimeUpdate();
 
     // ページ遷移（SPA）時に次の動画の取得準備とイベントリスナー再設定を行う
-    document.addEventListener("yt-navigate-finish", () => {
+    this._navigateHandler = () => {
       // 状態をリセット
       this.currentVideoId = null;
       this.captionBlocks = [];
@@ -81,7 +98,8 @@ const SubtitleEnhancer = {
       // 新しい動画の字幕を事前取得
       setTimeout(() => this.fetchSubtitles(), 500);
       setTimeout(attachTimeUpdate, 1000);
-    });
+    };
+    document.addEventListener("yt-navigate-finish", this._navigateHandler);
   },
 
   createOverlay() {
@@ -117,7 +135,7 @@ const SubtitleEnhancer = {
             letter-spacing: 0.5px !important;
             font-size: 24px !important;
             color: #ffffff !important;
-            background: rgba(0, 0, 0, 0.75) !important;
+            background: rgba(0, 0, 0, 0.50) !important;
             text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8) !important;
             display: none !important;
             overflow: hidden !important;
@@ -705,22 +723,28 @@ const SubtitleEnhancer = {
       e.stopPropagation();
     });
 
-    document.addEventListener("mousemove", (e) => {
-      if (!this.isDragging) return;
-      const dy = e.clientY - this.dragStartY;
+    if (!this._dragMouseMoveHandler) {
+      this._dragMouseMoveHandler = (e) => {
+        if (!this.isDragging) return;
+        const dy = e.clientY - this.dragStartY;
 
-      const newBottom = this.overlayStartBottom - dy;
+        const newBottom = this.overlayStartBottom - dy;
 
-      overlay.style.bottom = `${newBottom}px`;
-      overlay.style.top = "auto";
-    });
+        overlay.style.bottom = `${newBottom}px`;
+        overlay.style.top = "auto";
+      };
+      document.addEventListener("mousemove", this._dragMouseMoveHandler);
+    }
 
-    document.addEventListener("mouseup", () => {
-      if (this.isDragging) {
-        this.isDragging = false;
-        overlay.style.cursor = "grab";
-      }
-    });
+    if (!this._dragMouseUpHandler) {
+      this._dragMouseUpHandler = () => {
+        if (this.isDragging) {
+          this.isDragging = false;
+          overlay.style.cursor = "grab";
+        }
+      };
+      document.addEventListener("mouseup", this._dragMouseUpHandler);
+    }
 
     overlay.addEventListener("dblclick", () => {
       this.isCustomPosition = false;
@@ -752,7 +776,7 @@ const SubtitleEnhancer = {
         this.yseOverlay.style.bottom = `${customY}%`;
         this.yseOverlay.style.top = "auto";
       } else {
-        this.yseOverlay.style.bottom = "10%";
+        this.yseOverlay.style.bottom = "5%";
         this.yseOverlay.style.top = "auto";
       }
 
@@ -813,6 +837,10 @@ const SubtitleEnhancer = {
   },
 
   cleanup() {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
     this.currentSentence = "";
     this.currentCaptionWindow = null;
     this.isSubtitleEnabled = false;
@@ -823,6 +851,36 @@ const SubtitleEnhancer = {
     this.teardownDomWatch();
     this.hideOverlay();
     this.hideOriginalCaptions(false);
+
+    if (this._interceptHandler) {
+      document.removeEventListener("YSE_INTERCEPTED_SUBTITLE", this._interceptHandler);
+      this._interceptHandler = null;
+    }
+
+    if (this._navigateHandler) {
+      document.removeEventListener("yt-navigate-finish", this._navigateHandler);
+      this._navigateHandler = null;
+    }
+
+    if (this._timeUpdateHandler) {
+      const video = document.querySelector("video");
+      if (video) {
+        video.removeEventListener("timeupdate", this._timeUpdateHandler);
+        video.removeAttribute("data-yse-timeupdate");
+      }
+      this._timeUpdateHandler = null;
+    }
+
+    if (this._dragMouseMoveHandler) {
+      document.removeEventListener("mousemove", this._dragMouseMoveHandler);
+      this._dragMouseMoveHandler = null;
+    }
+
+    if (this._dragMouseUpHandler) {
+      document.removeEventListener("mouseup", this._dragMouseUpHandler);
+      this._dragMouseUpHandler = null;
+    }
+
     if (this.yseOverlay) {
       this.yseOverlay.remove();
       this.yseOverlay = null;

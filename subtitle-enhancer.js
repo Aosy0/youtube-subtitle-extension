@@ -20,68 +20,89 @@ const SubtitleEnhancer = {
   lastFetchTime: 0,
   fetchErrorCount: 0,
   fetchBlocked: false,
+  _initialized: false,
+  _interceptHandler: null,
+  _navigateHandler: null,
+  _timeUpdateHandler: null,
+  _dragMouseMoveHandler: null,
+  _dragMouseUpHandler: null,
+  _videoElement: null,
 
   init() {
+    if (this._initialized) {
+      Logger.debug('字幕エンハンサーは既に初期化済みです');
+      return;
+    }
+    this._initialized = true;
+
     this.createOverlay();
     this.startPolling();
     this.setupEventListeners();
 
     // ブリッジからのインターセプト通知をリッスン
-    document.addEventListener("YSE_INTERCEPTED_SUBTITLE", (e) => {
-      if (e.detail && e.detail.text) {
-        Logger.info(`ブリッジからインターセプトされた字幕データを受信しました (${e.detail.text.length}バイト)`);
-        try {
-          const data = JSON.parse(e.detail.text);
-          if (data && data.events) {
-            this.captionBlocks = this.parseJson3(data);
-            // ブロックデータが入ったらDOM監視を停止し時間ベース表示に切り替え
-            this.stopDomWatch();
-            Logger.info(
-              `インターセプトした字幕の解析完了 (ブロック数: ${this.captionBlocks.length})`,
-            );
+    if (!this._interceptHandler) {
+      this._interceptHandler = (e) => {
+        if (e.detail && e.detail.text) {
+          Logger.info(`ブリッジからインターセプトされた字幕データを受信しました (${e.detail.text.length}バイト)`);
+          try {
+            const data = JSON.parse(e.detail.text);
+            if (data && data.events) {
+              this.captionBlocks = this.parseJson3(data);
+              this.stopDomWatch();
+              Logger.info(
+                `インターセプトした字幕の解析完了 (ブロック数: ${this.captionBlocks.length})`,
+              );
+            }
+          } catch (err) {
+            Logger.error("インターセプトしたデータのパースに失敗:", err);
           }
-        } catch (err) {
-          Logger.error("インターセプトしたデータのパースに失敗:", err);
         }
-      }
-    });
+      };
+      document.addEventListener("YSE_INTERCEPTED_SUBTITLE", this._interceptHandler);
+    }
 
-    // 表示遅延を無くすため、初期化時に字幕データを裏で事前取得しておく
     this.fetchSubtitles();
-
-    // DOM監視（YouTubeの字幕ウィンドウを直接監視）
     this.setupDomWatch();
 
     Logger.info("字幕エンハンサーを初期化しました");
   },
   setupEventListeners() {
-    // 動画の再生時間更新に合わせて即座に字幕を更新する
+    if (this._navigateHandler) {
+      document.removeEventListener("yt-navigate-finish", this._navigateHandler);
+    }
+
+    if (!this._timeUpdateHandler) {
+      this._timeUpdateHandler = () => {
+        if (this.isSubtitleEnabled) {
+          this.updateDisplayFromTime();
+        }
+      };
+    }
+
     const attachTimeUpdate = () => {
       const video = document.querySelector("video");
-      if (video && !video.hasAttribute("data-yse-timeupdate")) {
-        video.setAttribute("data-yse-timeupdate", "true");
-        video.addEventListener("timeupdate", () => {
-          if (this.isSubtitleEnabled) {
-            this.updateDisplayFromTime();
-          }
-        });
+      if (video) {
+        if (this._videoElement && this._videoElement !== video) {
+          this._videoElement.removeEventListener("timeupdate", this._timeUpdateHandler);
+        }
+        if (this._videoElement !== video) {
+          this._videoElement = video;
+          video.addEventListener("timeupdate", this._timeUpdateHandler);
+        }
       }
     };
 
-    // 初回実行
     attachTimeUpdate();
 
-    // ページ遷移（SPA）時に次の動画の取得準備とイベントリスナー再設定を行う
-    document.addEventListener("yt-navigate-finish", () => {
-      // 状態をリセット
+    this._navigateHandler = () => {
       this.currentVideoId = null;
       this.captionBlocks = [];
       this.currentSentence = "";
       this.isFetching = false;
-      // 新しい動画の字幕を事前取得
       setTimeout(() => this.fetchSubtitles(), 500);
       setTimeout(attachTimeUpdate, 1000);
-    });
+    };
+    document.addEventListener("yt-navigate-finish", this._navigateHandler);
   },
 
   createOverlay() {
@@ -117,7 +138,7 @@ const SubtitleEnhancer = {
             letter-spacing: 0.5px !important;
             font-size: 24px !important;
             color: #ffffff !important;
-            background: rgba(0, 0, 0, 0.75) !important;
+            background: rgba(0, 0, 0, 0.50) !important;
             text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8) !important;
             display: none !important;
             overflow: hidden !important;
@@ -705,22 +726,28 @@ const SubtitleEnhancer = {
       e.stopPropagation();
     });
 
-    document.addEventListener("mousemove", (e) => {
-      if (!this.isDragging) return;
-      const dy = e.clientY - this.dragStartY;
+    if (!this._dragMouseMoveHandler) {
+      this._dragMouseMoveHandler = (e) => {
+        if (!this.isDragging) return;
+        const dy = e.clientY - this.dragStartY;
 
-      const newBottom = this.overlayStartBottom - dy;
+        const newBottom = this.overlayStartBottom - dy;
 
-      overlay.style.bottom = `${newBottom}px`;
-      overlay.style.top = "auto";
-    });
+        overlay.style.bottom = `${newBottom}px`;
+        overlay.style.top = "auto";
+      };
+      document.addEventListener("mousemove", this._dragMouseMoveHandler);
+    }
 
-    document.addEventListener("mouseup", () => {
-      if (this.isDragging) {
-        this.isDragging = false;
-        overlay.style.cursor = "grab";
-      }
-    });
+    if (!this._dragMouseUpHandler) {
+      this._dragMouseUpHandler = () => {
+        if (this.isDragging) {
+          this.isDragging = false;
+          overlay.style.cursor = "grab";
+        }
+      };
+      document.addEventListener("mouseup", this._dragMouseUpHandler);
+    }
 
     overlay.addEventListener("dblclick", () => {
       this.isCustomPosition = false;
@@ -752,7 +779,7 @@ const SubtitleEnhancer = {
         this.yseOverlay.style.bottom = `${customY}%`;
         this.yseOverlay.style.top = "auto";
       } else {
-        this.yseOverlay.style.bottom = "10%";
+        this.yseOverlay.style.bottom = "5%";
         this.yseOverlay.style.top = "auto";
       }
 
@@ -823,11 +850,29 @@ const SubtitleEnhancer = {
     this.teardownDomWatch();
     this.hideOverlay();
     this.hideOriginalCaptions(false);
+
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+
+    if (this._videoElement && this._timeUpdateHandler) {
+      this._videoElement.removeEventListener("timeupdate", this._timeUpdateHandler);
+      this._videoElement = null;
+    }
+
+    if (this._navigateHandler) {
+      document.removeEventListener("yt-navigate-finish", this._navigateHandler);
+      this._navigateHandler = null;
+    }
+
     if (this.yseOverlay) {
       this.yseOverlay.remove();
       this.yseOverlay = null;
       this.textElement = null;
     }
+
+    this._initialized = false;
     Logger.info("字幕エンハンサーをクリーンアップしました");
   },
 };

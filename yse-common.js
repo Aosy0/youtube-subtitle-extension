@@ -19,7 +19,7 @@ const CONFIG = {
         fontSize: 24,
         fontFamily: '"Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif',
         fontColor: '#ffffff',
-        backgroundColor: 'rgba(0, 0, 0, 0.75)',
+        backgroundColor: 'rgba(0, 0, 0, 0.50)',
         textShadow: '2px 2px 4px rgba(0, 0, 0, 0.8)',
         position: 'bottom',
         customPositionY: 10,
@@ -166,6 +166,10 @@ const LogPanel = {
         entry.style.color = level === 'error' ? '#ff4444' : level === 'warn' ? '#ffaa00' : '#00ff00';
         entry.textContent = `[${new Date().toLocaleTimeString()}] [${level.toUpperCase()}] ${args.join(' ')}`;
         this._logContainer.appendChild(entry);
+        const MAX_LOG_ENTRIES = 100;
+        while (this._logContainer.children.length > MAX_LOG_ENTRIES) {
+            this._logContainer.removeChild(this._logContainer.firstChild);
+        }
         this._logContainer.scrollTop = this._logContainer.scrollHeight;
     }
 };
