@@ -608,16 +608,16 @@ const SubtitleEnhancer = {
         i + 1 < deduped.length ? deduped[i + 1].start - endMs : Infinity;
 
       let shouldSplit = false;
-      if (nextGap > 1200) {
+      if (nextGap > 800) {
         // 時間ギャップが大きい場合は強制分割
         shouldSplit = true;
       } else if (endsWithPunctuation) {
-        // 句読点で終わっている場合、既に35文字以上あるか、2文以上あれば分割
-        if (charCount > 35 || sentenceCount >= 2) {
+        // 句読点で終わっている場合、20文字以上あるか2文以上あれば分割
+        if (charCount > 20 || sentenceCount >= 2) {
           shouldSplit = true;
         }
-      } else if (charCount > 65) {
-        // 句読点がないが、非常に長い場合は強制分割
+      } else if (charCount > 25) {
+        // 句読点がないが、25文字を超えたら強制分割
         shouldSplit = true;
       }
 
@@ -683,17 +683,78 @@ const SubtitleEnhancer = {
       return;
     }
 
+    const maxLines = Settings.get("maxLines");
+    const formatted = this.formatSubtitleText(text, maxLines);
+    const lineCount = formatted.split("<br>").length;
+
     if (this.textElement) {
-      this.textElement.textContent = text;
+      safeSetInnerHTML(this.textElement, formatted);
     } else {
-      this.yseOverlay.textContent = text;
+      safeSetInnerHTML(this.yseOverlay, formatted);
     }
     this.yseOverlay.style.setProperty("display", "block", "important");
     this.yseOverlay.style.removeProperty("visibility");
     this.yseOverlay.style.removeProperty("opacity");
     this.applyCustomStyles();
 
+    if (this.textElement) {
+      this.textElement.style.setProperty(
+        "-webkit-line-clamp",
+        String(Math.min(lineCount, Math.max(maxLines, 1))),
+        "important",
+      );
+    }
+
     Logger.debug("表示文:", text);
+  },
+
+  formatSubtitleText(text, maxLines = 2) {
+    const target = text.trim();
+    if (!target) return "";
+
+    const punkt = /[。！？.!?]/;
+    const hasPunctuation = punkt.test(target);
+
+    if (!hasPunctuation) {
+      return target;
+    }
+
+    const MAX_LEN = 20;
+    const sentences = [];
+    let buffer = "";
+    for (const char of target) {
+      buffer += char;
+      if (punkt.test(char)) {
+        sentences.push(buffer);
+        buffer = "";
+      }
+    }
+    if (buffer) sentences.push(buffer);
+
+    const lines = [];
+    for (const sentence of sentences) {
+      const bracketMatch = sentence.match(/\[.*?\]/);
+      if (bracketMatch) {
+        const before = sentence.slice(0, bracketMatch.index);
+        const tag = bracketMatch[0];
+        const after = sentence.slice(bracketMatch.index + tag.length);
+        if (before.trim()) lines.push(before.trim());
+        lines.push(tag);
+        if (after.trim()) lines.push(after.trim());
+      } else if (sentence.length <= MAX_LEN) {
+        lines.push(sentence);
+      } else {
+        for (let i = 0; i < sentence.length; i += MAX_LEN) {
+          lines.push(sentence.slice(i, i + MAX_LEN));
+        }
+      }
+    }
+
+    if (lines.length > maxLines) {
+      return lines.join("");
+    }
+
+    return lines.join("<br>");
   },
 
   hideOverlay() {
