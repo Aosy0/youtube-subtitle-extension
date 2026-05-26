@@ -10,6 +10,7 @@
 async function yseInit() {
   await Settings.init();
   PlayerController.init();
+  UIController.init();
   LogPanel.init();
   Logger.info('YouTube Subtitle Enhancer を初期化しました');
 }
