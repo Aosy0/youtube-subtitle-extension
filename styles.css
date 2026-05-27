@@ -34,6 +34,7 @@
     -webkit-line-clamp: 2 !important;
     -webkit-box-orient: vertical !important;
     overflow: hidden !important;
+    word-break: keep-all !important;
 }
 
 /* 元の字幕を非表示 */

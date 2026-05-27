@@ -156,6 +156,7 @@ const SubtitleEnhancer = {
             -webkit-line-clamp: 2 !important;
             -webkit-box-orient: vertical !important;
             overflow: hidden !important;
+            word-break: keep-all !important;
         `;
     this.yseOverlay.appendChild(this.textElement);
 
