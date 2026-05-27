@@ -743,8 +743,27 @@ const SubtitleEnhancer = {
       } else if (sentence.length <= MAX_LEN) {
         lines.push(sentence);
       } else {
-        for (let i = 0; i < sentence.length; i += MAX_LEN) {
-          lines.push(sentence.slice(i, i + MAX_LEN));
+        let remaining = sentence;
+        while (remaining.length > MAX_LEN) {
+          let cutAt = MAX_LEN;
+          let lastSpace = remaining.lastIndexOf(' ', cutAt);
+          if (lastSpace > 0) {
+            cutAt = lastSpace;
+          } else {
+            for (let i = cutAt; i > 0; i--) {
+              const prevIsAlpha = /[a-zA-Z]/.test(remaining[i - 1]);
+              const currIsAlpha = /[a-zA-Z]/.test(remaining[i]);
+              if (prevIsAlpha !== currIsAlpha) {
+                cutAt = i;
+                break;
+              }
+            }
+          }
+          lines.push(remaining.slice(0, cutAt));
+          remaining = remaining.slice(cutAt).trimStart();
+        }
+        if (remaining) {
+          lines.push(remaining);
         }
       }
     }
