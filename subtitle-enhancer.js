@@ -134,6 +134,7 @@ const SubtitleEnhancer = {
             border-radius: 8px !important;
             white-space: pre-wrap !important;
             word-wrap: break-word !important;
+            word-break: keep-all !important;
             line-height: 1.4 !important;
             letter-spacing: 0.5px !important;
             font-size: 24px !important;
@@ -611,7 +612,7 @@ const SubtitleEnhancer = {
       if (nextGap > 1200) {
         shouldSplit = true;
       } else if (endsWithPunctuation) {
-        if (sentenceCount >= 2 || charCount > 50) {
+        if (charCount >= 10 || sentenceCount >= 2) {
           shouldSplit = true;
         }
       } else if (charCount > 80) {
@@ -716,7 +717,7 @@ const SubtitleEnhancer = {
       return target;
     }
 
-    const MAX_LEN = 20;
+    const MAX_LEN = 50;
     const sentences = [];
     let buffer = "";
     for (const char of target) {
