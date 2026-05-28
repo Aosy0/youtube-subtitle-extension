@@ -267,6 +267,42 @@ function runParseJson3Tests(parseJson3, label) {
       expect(parseJson3(data)).toEqual([]);
     });
   });
+
+  // ★ 非連続重複の除去（ASR字幕のオーバーラップ対策）
+  describe(`${label}: 非連続な同一テキストはブロック内で除去される`, () => {
+    it('同じテキストが別のテキストを挟んで出現した場合、2回目はスキップされる', () => {
+      const data = {
+        events: [
+          { tStartMs: 1000, dDurationMs: 2000, segs: [{ utf8: 'Hello' }] },
+          { tStartMs: 3100, dDurationMs: 1000, segs: [{ utf8: 'beautiful' }] },
+          { tStartMs: 4200, dDurationMs: 1000, segs: [{ utf8: 'Hello' }] },
+        ],
+      };
+      const blocks = parseJson3(data);
+      expect(blocks).toHaveLength(1);
+      const helloMatches = blocks[0].text.match(/Hello/g);
+      expect(helloMatches).toHaveLength(1);
+      expect(blocks[0].text).toContain('beautiful');
+    });
+
+    it('3回同じテキストが出現しても1回だけ保持される', () => {
+      const data = {
+        events: [
+          { tStartMs: 1000, dDurationMs: 2000, segs: [{ utf8: 'Hello' }] },
+          { tStartMs: 3100, dDurationMs: 1000, segs: [{ utf8: 'beautiful' }] },
+          { tStartMs: 4200, dDurationMs: 1000, segs: [{ utf8: 'Hello' }] },
+          { tStartMs: 5300, dDurationMs: 1000, segs: [{ utf8: 'world' }] },
+          { tStartMs: 6400, dDurationMs: 1000, segs: [{ utf8: 'Hello' }] },
+        ],
+      };
+      const blocks = parseJson3(data);
+      expect(blocks).toHaveLength(1);
+      const helloMatches = blocks[0].text.match(/Hello/g);
+      expect(helloMatches).toHaveLength(1);
+      expect(blocks[0].text).toContain('beautiful');
+      expect(blocks[0].text).toContain('world');
+    });
+  });
 }
 
 // --- テスト実行 ---
