@@ -17,9 +17,18 @@ dist/
 test-results/
 .playwright/
 .playwright-cli/
+.playwright-mcp/
 tests/**/test-profile*/
 tests/test-chrome-profile/
 tests/test-profile/
+test-profile-tmp/
+test-profile-tmp2/
+
+# OpenCode セッション継続データ
+.omo/run-continuation/
+
+# テストツール生成物
+tools/
 
 # リンターキャッシュ
 .ruff_cache/
