@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YouTube Subtitle Enhancer",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "YouTube字幕を改善：文単位表示、カスタマイズ可能なスタイル、日本語字幕優先、自動翻訳対応",
   "permissions": [
     "storage"
