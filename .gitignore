@@ -28,16 +28,21 @@ test-profile-tmp2/
 .omo/run-continuation/
 
 # テストツール生成物
-tools/
+tools/*
+!tools/charcount.js
+!tools/debug_popup.html
 
 # リンターキャッシュ
 .ruff_cache/
 
 # デバッグ・テスト用の一時ファイル (拡張子ベース)
 *.py
+!tests/e2e/*.py
 *.png
 *.yaml
+!tests/fixtures/*.yaml
 *.txt
+!tests/fixtures/*.txt
 !/.env.example
 
 # 拡張機能アセットは無視から除外
@@ -45,23 +50,10 @@ tools/
 
 # テスト用デバッグプロファイル
 tests/e2e/debug-*
-tests/e2e/check-pot.mjs
 
-# 個別デバッグファイル
-debug_popup.html
-test-mcp-interactive.js
-test-timing.js
-inject_test.py
-test_cdp.py
-test_page.py
-run-with-installed-profile.mjs
-initial_load.yaml
-playing_state.yaml
-playing_state_2.yaml
-raw_response.txt
-popup_debug_screenshot.png
-subtitle_debug.png
-test-result-final.png
-test-screenshot.png
+# テスト結果・デバッグ画像
+test-results/
+*.png
 yse-error.png
 *.html
+!tools/debug_popup.html

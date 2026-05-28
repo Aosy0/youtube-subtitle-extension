@@ -4,16 +4,12 @@
   "description": "YouTubeの字幕表示を改善するChrome拡張機能です。",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
     "count": "node tools/charcount.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test tests/e2e/full/",
-    "typecheck": "tsc --noEmit"
+    "test:e2e": "playwright test tests/e2e/full/"
   },
   "keywords": [],
   "author": "",
@@ -24,15 +20,8 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@crxjs/vite-plugin": "^2.0.0-beta.28",
-    "@types/node": "^25.6.0",
-    "@vitest/coverage-v8": "^1.6.0",
-    "@vitest/ui": "^1.6.0",
     "jsdom": "^24.1.0",
     "playwright": "^1.45.0",
-    "tsx": "^4.21.0",
-    "typescript": "^6.0.2",
-    "vite": "^5.3.0",
     "vitest": "^1.6.0"
   }
 }

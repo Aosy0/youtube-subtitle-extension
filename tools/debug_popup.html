@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DEBUG - YSE Popup</title>
+    <link rel="stylesheet" href="popup/popup.css">
+    <style>
+        body { background: #333; padding: 20px; }
+        .popup-container { background: #1a1a1a; border: 1px solid #444; width: 320px; }
+    </style>
+</head>
+<body>
+    <div class="popup-container">
+        <header class="popup-header">
+            <h1 class="popup-title">YSE設定</h1>
+            <span class="popup-version">v1.0.1</span>
+        </header>
+        <div class="popup-content">
+            <div class="setting-item">
+                <label class="setting-checkbox">
+                    <input type="checkbox" id="sentenceMode">
+                    <span>文単位で表示</span>
+                </label>
+            </div>
+            <div class="setting-item">
+                <label class="setting-label">優先言語</label>
+                <input type="text" id="preferredLanguage" class="setting-input" placeholder="ja">
+            </div>
+            <div class="setting-item">
+                <label class="setting-label">フォントサイズ</label>
+                <div class="range-container">
+                    <input type="range" id="fontSize" min="12" max="48" class="setting-range">
+                    <span id="fontSizeValue" class="range-value">24px</span>
+                </div>
+            </div>
+            <div class="setting-item">
+                <label class="setting-label">フォントの太さ (Weight)</label>
+                <select id="fontWeight" class="setting-input">
+                    <option value="300">Light (300)</option>
+                    <option value="400">Normal (400)</option>
+                    <option value="500">Medium (500)</option>
+                    <option value="700">Bold (700)</option>
+                    <option value="900">Black (900)</option>
+                </select>
+            </div>
+            <div class="setting-item">
+                <label class="setting-checkbox">
+                    <input type="checkbox" id="autoTranslateIfNotAvailable">
+                    <span>自動翻訳を使用</span>
+                </label>
+            </div>
+        </div>
+        <div class="popup-actions">
+            <button id="openSettings" class="btn btn-primary">詳細設定</button>
+            <button id="resetSettings" class="btn btn-secondary">リセット</button>
+        </div>
+        <footer class="popup-footer">
+            <p>Alt+S で設定パネルを開く</p>
+        </footer>
+    </div>
+</body>
+</html>

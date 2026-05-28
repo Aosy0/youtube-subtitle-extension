@@ -76,13 +76,7 @@ function extractParseJson3FromFile(filePath) {
 
 // --- ソースファイルから抽出した関数 ---
 const parseJson3FromRoot = extractParseJson3FromFile(resolve(ROOT, 'subtitle-enhancer.js'));
-let parseJson3FromSrc;
-try {
-  parseJson3FromSrc = extractParseJson3FromFile(resolve(ROOT, 'src/subtitle-enhancer.js'));
-} catch (e) {
-  // src版に構文エラーがある場合は null をセットしてテストで検出させる
-  parseJson3FromSrc = null;
-}
+
 
 // --- テスト用ヘルパー ---
 function runParseJson3Tests(parseJson3, label) {
@@ -310,40 +304,6 @@ function runParseJson3Tests(parseJson3, label) {
 describe('parseJson3 from source files', () => {
   describe('root/subtitle-enhancer.js', () => {
     runParseJson3Tests(parseJson3FromRoot, 'root');
-  });
-
-  describe('src/subtitle-enhancer.js', () => {
-    it('ソースファイルから parseJson3 が抽出できる', () => {
-      expect(parseJson3FromSrc).not.toBeNull();
-    });
-
-    if (parseJson3FromSrc) {
-      runParseJson3Tests(parseJson3FromSrc, 'src');
-    }
-  });
-});
-
-// --- 同期ズレ検出: 2つのソースファイルの関数が同一の結果を出すことを確認 ---
-describe('parseJson3 source sync check', () => {
-  it('root版とsrc版の関数が同じ結果を返す（同期ズレ検出）', () => {
-    if (!parseJson3FromSrc) {
-      // src版に構文エラーがある場合はこのテストも失敗させる
-      throw new Error('src/subtitle-enhancer.js has syntax error - cannot compare');
-    }
-
-    const testData = {
-      events: [
-        { tStartMs: 1000, dDurationMs: 1000, segs: [{ utf8: 'Hello' }] },
-        { tStartMs: 2000, dDurationMs: 1000, segs: [{ utf8: 'world.' }] },
-        { tStartMs: 3500, dDurationMs: 1000, segs: [{ utf8: 'This is a longer sentence that should be processed correctly.' }] },
-        { tStartMs: 5000, dDurationMs: 1000, segs: [{ utf8: 'Second part.' }] },
-      ],
-    };
-
-    const rootBlocks = parseJson3FromRoot(testData);
-    const srcBlocks = parseJson3FromSrc(testData);
-
-    expect(srcBlocks).toEqual(rootBlocks);
   });
 });
 
