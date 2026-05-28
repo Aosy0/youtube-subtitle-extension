@@ -77,12 +77,33 @@ youtube-subtitle-extension/
 │   ├── icon16.png         # 16x16 アイコン
 │   ├── icon48.png         # 48x48 アイコン
 │   └── icon128.png        # 128x128 アイコン
-├── public/
-│   └── icons/             # ビルド用アイコンソース
-├── package.json           # npm設定（ビルド・テスト）
-├── vite.config.js         # Viteビルド設定
+├── tests/
+│   ├── unit/              # ユニットテスト（vitest + jsdom）
+│   │   ├── parseJson3.test.js
+│   │   └── syntax-check.test.js
+│   ├── e2e/               # E2Eテスト・検証スクリプト（Playwright）
+│   │   ├── test-extension.mjs       # 字幕表示フローテスト
+│   │   ├── check-pot.mjs            # YouTube字幕API確認
+│   │   ├── run-with-installed-profile.mjs  # インストール済みChromeで実行
+│   │   ├── test-mcp-interactive.js  # MCP対話テスト
+│   │   ├── test-timing.js           # 字幕タイミング検証
+│   │   ├── test_page.py             # テスト用ページ操作
+│   │   ├── test_cdp.py              # CDP検証
+│   │   └── inject_test.py           # 注入テスト
+│   └── fixtures/          # テストデータ（YAML, raw等）
+│       ├── initial_load.yaml
+│       ├── playing_state.yaml
+│       ├── playing_state_2.yaml
+│       └── raw_response.txt
+├── tools/
+│   ├── charcount.js       # 文字数カウントCLI
+│   └── debug_popup.html   # ポップアップデバッグHTML
+├── package.json           # npm設定（テスト）
+├── package-lock.json      # 依存関係ロックファイル
 ├── vitest.config.js       # Vitestテスト設定
-├── tests/                 # テストファイル
+├── AGENTS.md              # 開発エージェント設定
+├── .gitignore             # Git管理除外設定
+├── .env.example           # 環境変数サンプル
 └── README.md              # このファイル
 ```
 
@@ -170,21 +191,6 @@ youtube-subtitle-extension/
 npm install
 ```
 
-### ローカル開発
-```bash
-# 開発サーバー起動
-npm run dev
-
-# Chromeで読み込み
-# chrome://extensions/ → デベロッパーモードON → パッケージ化されていない拡張機能を読み込む
-```
-
-### ビルド
-```bash
-# 本番用ビルド
-npm run build
-```
-
 ### テスト
 ```bash
 # ユニットテスト実行
@@ -193,7 +199,7 @@ npm test
 # テスト監視モード
 npm run test:watch
 
-# E2Eテスト実行
+# E2Eテスト実行（Playwright）
 npm run test:e2e
 ```
 
