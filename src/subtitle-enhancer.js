@@ -20,55 +20,132 @@ const SubtitleEnhancer = {
   lastFetchTime: 0,
   fetchErrorCount: 0,
   fetchBlocked: false,
-  _listenersAttached: false,
+  _initialized: false,
   _interceptHandler: null,
   _navigateHandler: null,
   _timeUpdateHandler: null,
   _dragMouseMoveHandler: null,
+  _dragMouseMoveHandler: null,
   _dragMouseUpHandler: null,
+  _videoElement: null,
+
+  _segmentTimer: null,
+  _currentSegments: [],
+  _segmentIndex: 0,
+  _pendingTruncationCheck: false,
+  _resizeObserver: null,
+  nativeSubtitleMode: false,
+  _nativeStyleElement: null,
 
   init() {
+    if (this._initialized) {
+      Logger.debug('字幕エンハンサーは既に初期化済みです');
+      return;
+    }
+    this._initialized = true;
+
     this.createOverlay();
     this.startPolling();
     this.setupEventListeners();
 
-    if (this._interceptHandler) {
-      document.removeEventListener("YSE_INTERCEPTED_SUBTITLE", this._interceptHandler);
-    }
-    this._interceptHandler = (e) => {
-      if (e.detail && e.detail.text) {
-        Logger.info(`ブリッジからインターセプトされた字幕データを受信しました (${e.detail.text.length}バイト)`);
-        try {
-          const data = JSON.parse(e.detail.text);
-          if (data && data.events) {
-            this.captionBlocks = this.parseJson3(data);
-            // ブロックデータが入ったらDOM監視を停止し時間ベース表示に切り替え
-            this.stopDomWatch();
-            Logger.info(
-              `インターセプトした字幕の解析完了 (ブロック数: ${this.captionBlocks.length})`,
-            );
+    // ブリッジからのインターセプト通知をリッスン
+    if (!this._interceptHandler) {
+      this._interceptHandler = (e) => {
+        if (e.detail && e.detail.text) {
+          Logger.info(`ブリッジからインターセプトされた字幕データを受信しました (${e.detail.text.length}バイト)`);
+          try {
+            const data = JSON.parse(e.detail.text);
+            if (data && data.events) {
+              this.captionBlocks = this.parseJson3(data);
+              this.stopDomWatch();
+              Logger.info(
+                `インターセプトした字幕の解析完了 (ブロック数: ${this.captionBlocks.length})`,
+              );
+            }
+          } catch (err) {
+            Logger.error("インターセプトしたデータのパースに失敗:", err);
           }
-        } catch (err) {
-          Logger.error("インターセプトしたデータのパースに失敗:", err);
         }
-      }
-    };
-    document.addEventListener("YSE_INTERCEPTED_SUBTITLE", this._interceptHandler);
+      };
+      document.addEventListener("YSE_INTERCEPTED_SUBTITLE", this._interceptHandler);
+    }
 
-    // 表示遅延を無くすため、初期化時に字幕データを裏で事前取得しておく
     this.fetchSubtitles();
-
-    // DOM監視（YouTubeの字幕ウィンドウを直接監視）
     this.setupDomWatch();
 
     Logger.info("字幕エンハンサーを初期化しました");
   },
+
+  setNativeSubtitleMode(enabled) {
+    if (this.nativeSubtitleMode === enabled) return;
+    this.nativeSubtitleMode = enabled;
+    if (enabled) {
+      Logger.info("ネイティブ日本語字幕モード: 背景・フォントのみ適用します");
+      this.hideOverlay();
+      this.hideOriginalCaptions(false);
+      this._applyNativeStyles();
+      this.stopDomWatch();
+      this._clearSegmentTimer();
+      this.currentSentence = "";
+      this.lastText = "";
+    } else {
+      Logger.info("ネイティブ日本語字幕モードを解除しました");
+      this._removeNativeStyles();
+    }
+  },
+
+  _applyNativeStyles() {
+    const fontSize = Settings.get("fontSize");
+    const fontColor = Settings.get("fontColor");
+    const bgColor = Settings.get("backgroundColor");
+    const fontFamily = Settings.get("fontFamily");
+    const textShadow = Settings.get("textShadow");
+    const lineHeight = Settings.get("lineHeight");
+    const letterSpacing = Settings.get("letterSpacing");
+
+    if (!this._nativeStyleElement) {
+      this._nativeStyleElement = document.createElement("style");
+      this._nativeStyleElement.id = "yse-native-subtitle-styles";
+      document.head.appendChild(this._nativeStyleElement);
+    }
+    this._nativeStyleElement.textContent = `
+        .ytp-caption-window-container { display: block; }
+        .caption-window,
+        .ytp-caption-window,
+        .ytp-caption-window-top,
+        .ytp-caption-window-bottom {
+          font-family: ${fontFamily};
+          font-size: ${fontSize}px;
+          color: ${fontColor};
+          line-height: ${lineHeight};
+          letter-spacing: ${letterSpacing}px;
+        }
+        .ytp-caption-segment {
+          font-family: ${fontFamily};
+          font-size: ${fontSize}px;
+          color: ${fontColor};
+          background: ${bgColor};
+          text-shadow: ${textShadow};
+          padding: 2px 6px;
+          border-radius: 4px;
+          -webkit-box-decoration-break: clone;
+          box-decoration-break: clone;
+        }
+      `;
+  },
+
+  _removeNativeStyles() {
+    if (this._nativeStyleElement) {
+      this._nativeStyleElement.remove();
+      this._nativeStyleElement = null;
+    }
+  },
+
   setupEventListeners() {
     if (this._navigateHandler) {
       document.removeEventListener("yt-navigate-finish", this._navigateHandler);
     }
 
-    // 動画の再生時間更新に合わせて即座に字幕を更新する
     if (!this._timeUpdateHandler) {
       this._timeUpdateHandler = () => {
         if (this.isSubtitleEnabled) {
@@ -79,23 +156,24 @@ const SubtitleEnhancer = {
 
     const attachTimeUpdate = () => {
       const video = document.querySelector("video");
-      if (video && !video.hasAttribute("data-yse-timeupdate")) {
-        video.setAttribute("data-yse-timeupdate", "true");
-        video.addEventListener("timeupdate", this._timeUpdateHandler);
+      if (video) {
+        if (this._videoElement && this._videoElement !== video) {
+          this._videoElement.removeEventListener("timeupdate", this._timeUpdateHandler);
+        }
+        if (this._videoElement !== video) {
+          this._videoElement = video;
+          video.addEventListener("timeupdate", this._timeUpdateHandler);
+        }
       }
     };
 
-    // 初回実行
     attachTimeUpdate();
 
-    // ページ遷移（SPA）時に次の動画の取得準備とイベントリスナー再設定を行う
     this._navigateHandler = () => {
-      // 状態をリセット
       this.currentVideoId = null;
       this.captionBlocks = [];
       this.currentSentence = "";
       this.isFetching = false;
-      // 新しい動画の字幕を事前取得
       setTimeout(() => this.fetchSubtitles(), 500);
       setTimeout(attachTimeUpdate, 1000);
     };
@@ -139,7 +217,6 @@ const SubtitleEnhancer = {
             background: rgba(0, 0, 0, 0.50) !important;
             text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8) !important;
             display: none !important;
-            overflow: hidden !important;
             font-family: "Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif !important;
             cursor: grab !important;
             user-select: none !important;
@@ -149,11 +226,8 @@ const SubtitleEnhancer = {
     this.textElement = document.createElement("div");
     this.textElement.className = "yse-caption-text";
     this.textElement.style.cssText = `
-            display: -webkit-box !important;
-            -webkit-line-clamp: 2 !important;
-            -webkit-box-orient: vertical !important;
-            overflow: hidden !important;
-            word-break: keep-all !important;
+            display: block !important;
+            word-break: normal !important;
         `;
     this.yseOverlay.appendChild(this.textElement);
 
@@ -177,6 +251,15 @@ const SubtitleEnhancer = {
     const isExtensionEnabled = Settings.get("enabled") !== false;
 
     if (!isExtensionEnabled) {
+      if (this.yseOverlay && this.yseOverlay.style.display !== "none") {
+        this.hideOverlay();
+      }
+      this.hideOriginalCaptions(false);
+      return;
+    }
+
+    // ネイティブ日本語字幕が検出された場合は拡張機能の加工をスキップ
+    if (this.nativeSubtitleMode) {
       if (this.yseOverlay && this.yseOverlay.style.display !== "none") {
         this.hideOverlay();
       }
@@ -578,6 +661,8 @@ const SubtitleEnhancer = {
     let accumulated = "";
     let blockStart = -1;
     let blockEnd = 0;
+    // 同一ブロック内での重複テキスト蓄積を防止（非連続重複対策）
+    let blockSeenTexts = new Set();
 
     for (let i = 0; i < deduped.length; i++) {
       const line = deduped[i];
@@ -589,6 +674,12 @@ const SubtitleEnhancer = {
       // テキストの末尾からゴミ（先頭句読点）を除いて蓄積
       const clean = line.text.replace(/^[。！？.!?\s]+/, "").trimStart();
       if (clean) {
+        // 同一ブロック内で既に同じテキストが追加されていたらスキップ（ASR重複対策）
+        if (blockSeenTexts.has(clean)) {
+          blockEnd = endMs;
+          continue;
+        }
+        blockSeenTexts.add(clean);
         // スペース区切り（英語等）か直結（日本語等）かを判断
         const needsSpace =
           accumulated.length > 0 &&
@@ -615,8 +706,6 @@ const SubtitleEnhancer = {
         }
       } else if (charCount > 80) {
         shouldSplit = true;
-      } else if (charCount > 25) {
-        shouldSplit = true;
       }
 
       if (shouldSplit) {
@@ -630,6 +719,7 @@ const SubtitleEnhancer = {
         }
         accumulated = "";
         blockStart = -1;
+        blockSeenTexts = new Set();
       }
     }
 
@@ -669,21 +759,150 @@ const SubtitleEnhancer = {
       // 表示すべき字幕がない時間帯
       if (this.currentSentence !== "") {
         this.currentSentence = "";
+        this._clearSegmentTimer();
         this.hideOverlay();
       }
     }
   },
 
-    displaySentence(text) {
+  _setupResizeObserver() {
+    if (this._resizeObserver) return;
+
+    this._resizeObserver = new ResizeObserver(() => {
+      if (this._pendingTruncationCheck) return;
+      this._pendingTruncationCheck = true;
+      requestAnimationFrame(() => {
+        this._pendingTruncationCheck = false;
+        if (this.currentSentence && this.isSubtitleEnabled) {
+          const maxLines = Settings.get("maxLines");
+          this.displaySentence(this.currentSentence, maxLines);
+        }
+      });
+    });
+
+    if (this.playerContainer) {
+      this._resizeObserver.observe(this.playerContainer);
+    }
+  },
+
+  _clearSegmentTimer() {
+    if (this._segmentTimer) {
+      clearInterval(this._segmentTimer);
+      this._segmentTimer = null;
+    }
+    this._currentSegments = [];
+    this._segmentIndex = 0;
+  },
+
+  _isTextTruncated(element, maxLines) {
+    if (!element || !element.parentElement) return false;
+
+    const clone = element.cloneNode(true);
+    const parentWidth = element.parentElement.clientWidth;
+    clone.style.cssText = `
+      position: absolute !important;
+      visibility: hidden !important;
+      display: block !important;
+      width: ${parentWidth}px !important;
+      font-size: ${getComputedStyle(element).fontSize} !important;
+      line-height: ${getComputedStyle(element).lineHeight} !important;
+      font-family: ${getComputedStyle(element).fontFamily} !important;
+      word-break: keep-all !important;
+      overflow: visible !important;
+      white-space: normal !important;
+    `;
+    element.parentElement.appendChild(clone);
+    const lineHeight = parseFloat(getComputedStyle(clone).lineHeight);
+    const fullHeight = clone.scrollHeight;
+    element.parentElement.removeChild(clone);
+
+    if (!lineHeight || lineHeight <= 0) return false;
+    const actualLines = Math.round(fullHeight / lineHeight);
+    return actualLines > maxLines;
+  },
+
+  _splitIntoSegments(text, maxLines) {
+    const target = text.trim();
+    if (!target) return [];
+
+    const punkt = /[。！？.!?]/;
+    const splitChars = /[、，,。！？.!? \t]/;
+
+    if (!punkt.test(target) && target.length <= 30) {
+      return [target];
+    }
+
+    const segments = [];
+    let buffer = "";
+    for (const char of target) {
+      buffer += char;
+      if (punkt.test(char)) {
+        segments.push(buffer);
+        buffer = "";
+      }
+    }
+    if (buffer.trim()) segments.push(buffer);
+
+    const finalSegments = [];
+    for (const seg of segments) {
+      if (seg.length <= 40) {
+        finalSegments.push(seg);
+        continue;
+      }
+      let current = seg;
+      while (current.length > 40) {
+        let mid = Math.floor(current.length / 2);
+        let splitAt = mid;
+        for (let i = mid; i < current.length - 1; i++) {
+          if (splitChars.test(current[i])) {
+            splitAt = i + 1;
+            break;
+          }
+        }
+        finalSegments.push(current.slice(0, splitAt));
+        current = current.slice(splitAt);
+      }
+      if (current.trim()) finalSegments.push(current);
+    }
+
+    if (finalSegments.length < 2 && target.length > 50) {
+      const mid = Math.floor(target.length / 2);
+      return [target.slice(0, mid), target.slice(mid)];
+    }
+
+    return finalSegments.length > 0 ? finalSegments : [text];
+  },
+
+  _showNextSegment(block) {
+    if (!this._currentSegments.length) return;
+
+    if (this._segmentIndex >= this._currentSegments.length) {
+      this._clearSegmentTimer();
+      return;
+    }
+
+    const seg = this._currentSegments[this._segmentIndex];
+    this._segmentIndex++;
+
+    if (this.textElement) {
+      safeSetInnerHTML(this.textElement, seg.replace(/\n/g, "<br>"));
+    }
+  },
+
+  displaySentence(text, forcedMaxLines) {
     if (!this.yseOverlay) return;
     if (!this.isSubtitleEnabled || !text || !text.trim()) {
+      this._clearSegmentTimer();
       this.hideOverlay();
       return;
     }
 
-    const maxLines = Settings.get("maxLines");
+    this._setupResizeObserver();
+    this._clearSegmentTimer();
+
+    const maxLines = forcedMaxLines !== undefined ? forcedMaxLines : Settings.get("maxLines");
+
     const formatted = this.formatSubtitleText(text, maxLines);
-    const lineCount = formatted.split("<br>").length;
 
     if (this.textElement) {
       safeSetInnerHTML(this.textElement, formatted);
@@ -695,15 +914,46 @@ const SubtitleEnhancer = {
     this.yseOverlay.style.removeProperty("opacity");
     this.applyCustomStyles();
 
-    if (this.textElement) {
-      this.textElement.style.setProperty(
-        "-webkit-line-clamp",
-        String(Math.min(lineCount, Math.max(maxLines, 1))),
-        "important",
-      );
-    }
+    requestAnimationFrame(() => {
+      if (!this.isSubtitleEnabled) return;
+
+      const truncated = this._isTextTruncated(this.textElement || this.yseOverlay, maxLines);
+      if (truncated) {
+        Logger.debug("字幕が省略されています。セグメントに分割して順次表示します");
+        this._startSegmentDisplay(text, maxLines);
+      }
+    });
 
     Logger.debug("表示文:", text);
+  },
+
+  _startSegmentDisplay(text, maxLines) {
+    this._clearSegmentTimer();
+
+    const segments = this._splitIntoSegments(text, maxLines);
+    if (segments.length <= 1) return;
+
+    this._currentSegments = segments;
+    this._segmentIndex = 0;
+
+    const block = this.captionBlocks.find(
+      (b) => this.currentSentence === b.text
+    );
+
+    const video = document.querySelector("video");
+    const blockDuration = block ? block.end - block.start : 5000;
+    const interval = Math.max(1000, Math.floor(blockDuration / segments.length));
+
+    if (this.textElement) {
+      safeSetInnerHTML(this.textElement, segments[0].replace(/\n/g, "<br>"));
+    }
+    this._segmentIndex = 1;
+
+    if (segments.length > 1) {
+      this._segmentTimer = setInterval(() => {
+        this._showNextSegment(block);
+      }, interval);
+    }
   },
 
   formatSubtitleText(text, maxLines = 2) {
@@ -765,10 +1015,6 @@ const SubtitleEnhancer = {
           lines.push(remaining);
         }
       }
-    }
-
-    if (lines.length > maxLines) {
-      return lines.join("");
     }
 
     return lines.join("<br>");
@@ -886,16 +1132,13 @@ const SubtitleEnhancer = {
       "important",
     );
     this.yseOverlay.style.setProperty("font-family", fontFamily, "important");
-    if (this.textElement) {
-      this.textElement.style.setProperty(
-        "-webkit-line-clamp",
-        String(maxLines),
-        "important",
-      );
-    }
   },
 
   updateStyles() {
+    if (this.nativeSubtitleMode) {
+      this._applyNativeStyles();
+      return;
+    }
     this.isCustomPosition = false;
     if (this.yseOverlay) {
       this.yseOverlay.style.left = "0";
@@ -918,10 +1161,6 @@ const SubtitleEnhancer = {
   },
 
   cleanup() {
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
-    }
     this.currentSentence = "";
     this.currentCaptionWindow = null;
     this.isSubtitleEnabled = false;
@@ -930,12 +1169,23 @@ const SubtitleEnhancer = {
     this.isFetching = false;
     this.fetchBlocked = false;
     this.teardownDomWatch();
+    this._clearSegmentTimer();
     this.hideOverlay();
     this.hideOriginalCaptions(false);
 
-    if (this._interceptHandler) {
-      document.removeEventListener("YSE_INTERCEPTED_SUBTITLE", this._interceptHandler);
-      this._interceptHandler = null;
+    if (this._resizeObserver) {
+      this._resizeObserver.disconnect();
+      this._resizeObserver = null;
+    }
+
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+
+    if (this._videoElement && this._timeUpdateHandler) {
+      this._videoElement.removeEventListener("timeupdate", this._timeUpdateHandler);
+      this._videoElement = null;
     }
 
     if (this._navigateHandler) {
@@ -943,30 +1193,14 @@ const SubtitleEnhancer = {
       this._navigateHandler = null;
     }
 
-    if (this._timeUpdateHandler) {
-      const video = document.querySelector("video");
-      if (video) {
-        video.removeEventListener("timeupdate", this._timeUpdateHandler);
-        video.removeAttribute("data-yse-timeupdate");
-      }
-      this._timeUpdateHandler = null;
-    }
-
-    if (this._dragMouseMoveHandler) {
-      document.removeEventListener("mousemove", this._dragMouseMoveHandler);
-      this._dragMouseMoveHandler = null;
-    }
-
-    if (this._dragMouseUpHandler) {
-      document.removeEventListener("mouseup", this._dragMouseUpHandler);
-      this._dragMouseUpHandler = null;
-    }
-
     if (this.yseOverlay) {
       this.yseOverlay.remove();
       this.yseOverlay = null;
       this.textElement = null;
     }
+
+    this._removeNativeStyles();
+    this._initialized = false;
     Logger.info("字幕エンハンサーをクリーンアップしました");
   },
 };

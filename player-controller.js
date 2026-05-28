@@ -214,6 +214,23 @@ const PlayerController = {
 
         Logger.debug('利用可能な字幕トラック:', tracks.map(t => t.languageCode));
 
+        // ネイティブ日本語字幕（自動生成ではない）を検出したら拡張機能の処理を無効化
+        const nativeJapaneseTrack = tracks.find(t =>
+            t.languageCode.startsWith('ja') &&
+            t.kind !== 'asr' &&
+            t.kind !== 'forced'
+        );
+        if (nativeJapaneseTrack) {
+            Logger.info('✅ ネイティブ日本語字幕を検出しました。拡張機能の字幕加工をスキップします');
+            if (typeof SubtitleEnhancer !== 'undefined') {
+                SubtitleEnhancer.setNativeSubtitleMode(true);
+            }
+        } else {
+            if (typeof SubtitleEnhancer !== 'undefined') {
+                SubtitleEnhancer.setNativeSubtitleMode(false);
+            }
+        }
+
         const preferredTrack = tracks.find(
             t => t.languageCode === preferredLang ||
             t.languageCode.startsWith(preferredLang));
