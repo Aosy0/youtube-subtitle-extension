@@ -7,6 +7,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const autoTranslate = document.getElementById('autoTranslateIfNotAvailable');
     const fontSize = document.getElementById('fontSize');
     const fontSizeValue = document.getElementById('fontSizeValue');
+    const captionWidth = document.getElementById('captionWidth');
+    const captionWidthValue = document.getElementById('captionWidthValue');
+    const fontWeight = document.getElementById('fontWeight');
     const fontColor = document.getElementById('fontColor');
     const position = document.getElementById('position');
     const saveBtn = document.getElementById('saveBtn');
@@ -18,11 +21,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     autoTranslate.checked = settings.autoTranslateIfNotAvailable !== false;
     fontSize.value = settings.fontSize || 24;
     fontSizeValue.textContent = settings.fontSize || 24;
+    captionWidth.value = settings.captionWidth || 80;
+    captionWidthValue.textContent = settings.captionWidth || 80;
+    fontWeight.value = settings.fontWeight || 'normal';
     fontColor.value = settings.fontColor || '#ffffff';
     position.value = settings.position || 'bottom';
 
     fontSize.addEventListener('input', (e) => {
         fontSizeValue.textContent = e.target.value;
+    });
+
+    captionWidth.addEventListener('input', (e) => {
+        captionWidthValue.textContent = e.target.value;
     });
 
     saveBtn.addEventListener('click', async () => {
@@ -32,6 +42,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             fallbackLanguage: fallbackLanguage.value,
             autoTranslateIfNotAvailable: autoTranslate.checked,
             fontSize: parseInt(fontSize.value, 10),
+            captionWidth: parseInt(captionWidth.value, 10),
+            fontWeight: fontWeight.value,
             fontColor: fontColor.value,
             position: position.value
         };

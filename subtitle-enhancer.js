@@ -102,6 +102,8 @@ const SubtitleEnhancer = {
     const textShadow = Settings.get("textShadow");
     const lineHeight = Settings.get("lineHeight");
     const letterSpacing = Settings.get("letterSpacing");
+    const fontWeight = Settings.get("fontWeight");
+    const captionWidth = Settings.get("captionWidth");
 
     if (!this._nativeStyleElement) {
       this._nativeStyleElement = document.createElement("style");
@@ -117,13 +119,16 @@ const SubtitleEnhancer = {
           font-family: ${fontFamily};
           font-size: ${fontSize}px;
           color: ${fontColor};
+          font-weight: ${fontWeight};
           line-height: ${lineHeight};
           letter-spacing: ${letterSpacing}px;
+          max-width: ${captionWidth}vw;
         }
         .ytp-caption-segment {
           font-family: ${fontFamily};
           font-size: ${fontSize}px;
           color: ${fontColor};
+          font-weight: ${fontWeight};
           background: ${bgColor};
           text-shadow: ${textShadow};
           padding: 2px 6px;
@@ -201,7 +206,7 @@ const SubtitleEnhancer = {
             margin-left: auto !important;
             margin-right: auto !important;
             width: fit-content !important;
-            max-width: 80% !important;
+            max-width: ${Settings.get('captionWidth')}% !important;
             bottom: 10% !important;
             text-align: center !important;
             z-index: 40 !important;
@@ -884,6 +889,11 @@ const SubtitleEnhancer = {
     const seg = this._currentSegments[this._segmentIndex];
     this._segmentIndex++;
 
+    const video = document.querySelector("video");
+    if (video && video.paused) {
+      return;
+    }
+
     if (this.textElement) {
       safeSetInnerHTML(this.textElement, seg.replace(/\n/g, "<br>"));
     }
@@ -1088,12 +1098,14 @@ const SubtitleEnhancer = {
     const fontColor = Settings.get("fontColor");
     const bgColor = Settings.get("backgroundColor");
     const fontFamily = Settings.get("fontFamily");
+    const fontWeight = Settings.get("fontWeight");
     const textShadow = Settings.get("textShadow");
     const position = Settings.get("position");
     const customY = Settings.get("customPositionY");
     const maxLines = Settings.get("maxLines");
     const lineHeight = Settings.get("lineHeight");
     const letterSpacing = Settings.get("letterSpacing");
+    const captionWidth = Settings.get("captionWidth");
 
     if (!this.isCustomPosition) {
       if (position === "top") {
@@ -1132,6 +1144,13 @@ const SubtitleEnhancer = {
       "important",
     );
     this.yseOverlay.style.setProperty("font-family", fontFamily, "important");
+
+    this.yseOverlay.style.setProperty("font-weight", fontWeight, "important");
+    this.yseOverlay.style.setProperty(
+      "max-width",
+      `${captionWidth}%`,
+      "important",
+    );
   },
 
   updateStyles() {

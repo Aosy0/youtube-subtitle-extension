@@ -169,6 +169,17 @@ const UIController = {
                 </div>
 
                 <div class="yse-setting-group">
+                    <label class="yse-setting-label">字幕横幅: <span id="captionWidth-value">${Settings.get('captionWidth')}</span>%</label>
+                    <div class="yse-range-container">
+                        <input type="range" class="yse-setting-range" data-key="captionWidth" value="${Settings.get('captionWidth')}" min="10" max="100">
+                        <span class="yse-range-value">${Settings.get('captionWidth')}%</span>
+                    </div>
+                    <small style="color: #888; font-size: 12px; display: block; margin-top: 4px;">
+                        ウィンドウ幅に対する割合で指定（10%〜100%）
+                    </small>
+                </div>
+
+                <div class="yse-setting-group">
                     <label class="yse-setting-label">フォントファミリー</label>
                     <select class="yse-setting-select" data-key="fontFamily">
                         <option value='"Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif' ${Settings.get('fontFamily').includes('Noto') ? 'selected' : ''}>標準 (Noto Sans JP / ゴシック)</option>
@@ -177,6 +188,24 @@ const UIController = {
                         <option value='"UD デジタル 教科書体 N-R", "Klee One", serif' ${Settings.get('fontFamily').includes('UD') ? 'selected' : ''}>教科書体・手書き風</option>
                         <option value='"Yu Mincho", "MS PMincho", serif' ${Settings.get('fontFamily').includes('Mincho') ? 'selected' : ''}>明朝体</option>
                         <option value='Arial, Helvetica, sans-serif' ${Settings.get('fontFamily').includes('Arial') ? 'selected' : ''}>欧文 (Arial等)</option>
+                    </select>
+                </div>
+
+                <div class="yse-setting-group">
+                    <label class="yse-setting-label">フォントウェイト（太さ）</label>
+                    <select class="yse-setting-select" data-key="fontWeight">
+                        <option value="normal" ${Settings.get('fontWeight') === 'normal' ? 'selected' : ''}>標準 (normal)</option>
+                        <option value="bold" ${Settings.get('fontWeight') === 'bold' ? 'selected' : ''}>太字 (bold)</option>
+                        <option value="lighter" ${Settings.get('fontWeight') === 'lighter' ? 'selected' : ''}>細字 (lighter)</option>
+                        <option value="100" ${Settings.get('fontWeight') === '100' ? 'selected' : ''}>Thin (100)</option>
+                        <option value="200" ${Settings.get('fontWeight') === '200' ? 'selected' : ''}>Extra Light (200)</option>
+                        <option value="300" ${Settings.get('fontWeight') === '300' ? 'selected' : ''}>Light (300)</option>
+                        <option value="400" ${Settings.get('fontWeight') === '400' ? 'selected' : ''}>Normal (400)</option>
+                        <option value="500" ${Settings.get('fontWeight') === '500' ? 'selected' : ''}>Medium (500)</option>
+                        <option value="600" ${Settings.get('fontWeight') === '600' ? 'selected' : ''}>Semi Bold (600)</option>
+                        <option value="700" ${Settings.get('fontWeight') === '700' ? 'selected' : ''}>Bold (700)</option>
+                        <option value="800" ${Settings.get('fontWeight') === '800' ? 'selected' : ''}>Extra Bold (800)</option>
+                        <option value="900" ${Settings.get('fontWeight') === '900' ? 'selected' : ''}>Black (900)</option>
                     </select>
                 </div>
 
@@ -274,7 +303,7 @@ const UIController = {
                     }
                     const rangeValue = this.panel.querySelector('.yse-range-value');
                     if (rangeValue) {
-                        rangeValue.textContent = key === 'customPositionY' ? value + '%' : value + 'px';
+                        rangeValue.textContent = key === 'customPositionY' || key === 'captionWidth' ? value + '%' : value + 'px';
                     }
                     Settings.set(key, value);
                     SubtitleEnhancer.updateStyles();

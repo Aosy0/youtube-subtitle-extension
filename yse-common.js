@@ -19,10 +19,12 @@ const CONFIG = {
         fontSize: 24,
         fontFamily: '"Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif',
         fontColor: '#ffffff',
+        fontWeight: 'normal',
         backgroundColor: 'rgba(0, 0, 0, 0.50)',
         textShadow: '2px 2px 4px rgba(0, 0, 0, 0.8)',
         position: 'bottom',
         customPositionY: 10,
+        captionWidth: 80,
         maxLines: 2,
         lineHeight: 1.4,
         letterSpacing: 0.5
