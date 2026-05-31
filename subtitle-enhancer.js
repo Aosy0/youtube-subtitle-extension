@@ -749,7 +749,8 @@ const SubtitleEnhancer = {
     }
     const video = document.querySelector("video");
     if (!video) return;
-    const currentMs = video.currentTime * 1000;
+    const offset = Settings.get("subtitleOffset") || 0;
+    const currentMs = video.currentTime * 1000 - offset;
 
     const block = this.captionBlocks.find(
       (b) => currentMs >= b.start && currentMs <= b.end,

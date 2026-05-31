@@ -15,6 +15,7 @@ const CONFIG = {
         preferredLanguage: 'ja',
         fallbackLanguage: 'en',
         autoTranslateIfNotAvailable: true,
+        subtitleOffset: 0,
         sentenceMode: true,
         fontSize: 24,
         fontFamily: '"Noto Sans JP", "Yu Gothic", "Meiryo", sans-serif',

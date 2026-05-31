@@ -151,6 +151,27 @@ const UIController = {
                 <div style="border-top: 1px solid #444; margin: 16px 0;"></div>
 
                 <div class="yse-setting-group">
+                    <label class="yse-setting-label" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>タイミング調整</span>
+                        <span style="font-size: 13px; color: #aaa;">
+                            <span id="subtitleOffset-value">${Settings.get('subtitleOffset') || 0}</span>ms
+                        </span>
+                    </label>
+                    <div class="yse-range-container">
+                        <input type="range" class="yse-setting-range" data-key="subtitleOffset" 
+                            value="${Settings.get('subtitleOffset') || 0}" min="-1000" max="1000" step="50"
+                        >
+                        <span style="display: flex; justify-content: space-between; font-size: 11px; color: #888; margin-top: 4px;">
+                            <span>早く表示 (-1000ms)</span>
+                            <span>遅く表示 (+1000ms)</span>
+                        </span>
+                    </div>
+                    <small style="color: #888; font-size: 12px; display: block; margin-top: 4px;">
+                        自動翻訳字幕の表示タイミングを調整します
+                    </small>
+                </div>
+
+                <div class="yse-setting-group">
                     <label class="yse-setting-checkbox">
                         <input type="checkbox" data-key="sentenceMode" ${Settings.get('sentenceMode') ? 'checked' : ''}>
                         <span>文単位で表示（自動生成字幕を改善）</span>
@@ -301,9 +322,14 @@ const UIController = {
                     if (valueDisplay) {
                         valueDisplay.textContent = value;
                     }
-                    const rangeValue = this.panel.querySelector('.yse-range-value');
+                    const rangeContainer = e.target.closest('.yse-range-container');
+                    const rangeValue = rangeContainer ? rangeContainer.querySelector('.yse-range-value') : null;
                     if (rangeValue) {
-                        rangeValue.textContent = key === 'customPositionY' || key === 'captionWidth' ? value + '%' : value + 'px';
+                        if (key === 'subtitleOffset') {
+                            rangeValue.textContent = (value > 0 ? '+' : '') + value + 'ms';
+                        } else {
+                            rangeValue.textContent = key === 'customPositionY' || key === 'captionWidth' ? value + '%' : value + 'px';
+                        }
                     }
                     Settings.set(key, value);
                     SubtitleEnhancer.updateStyles();
