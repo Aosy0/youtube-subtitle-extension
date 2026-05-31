@@ -22,6 +22,11 @@ npm run test:watch  # 監視モード
 - `package.json` の依存（stagehand, dotenv, zod）はテスト/自動化用。拡張機能本体には不要
 - アイコンは `icons/` に配置
 
+## ファイル配置ルール
+- **デバッグ・検証スクリプト**（Playwright等による一時的な調査スクリプト）は `tools/` 配下に作成すること
+- `tests/` は **ユニットテスト（vitest）専用**のディレクトリ。E2Eスクリプトやデバッグスクリプトを配置しないこと
+- 一時プロファイル（`tmp-test*`、`test-profile*` 等）は `.gitignore` で無視対象
+
 ## テスト
 - ユニット: `tests/unit/**/*.test.js`（jsdom環境）— 現在58件すべてパス
 - E2E: `tests/e2e/full/`（Playwright）— 未作成
