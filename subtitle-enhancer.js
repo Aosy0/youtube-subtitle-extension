@@ -1152,11 +1152,16 @@ const SubtitleEnhancer = {
   hideOriginalCaptions(hide) {
     const container = document.querySelector(".ytp-caption-window-container");
     if (container) {
-      container.style.setProperty(
-        "display",
-        hide ? "none" : "block",
-        "important",
-      );
+      if (hide) {
+        container.style.setProperty(
+          "display",
+          "none",
+          "important",
+        );
+      } else {
+        // 強制表示を解除し、YouTube自身の表示制御に委ねる
+        container.style.removeProperty("display");
+      }
     }
   },
 
