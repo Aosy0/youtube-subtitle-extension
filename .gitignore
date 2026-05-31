@@ -18,11 +18,11 @@ test-results/
 .playwright/
 .playwright-cli/
 .playwright-mcp/
-tests/**/test-profile*/
-tests/test-chrome-profile/
-tests/test-profile/
-test-profile-tmp/
-test-profile-tmp2/
+tmp-test*/
+test-profile-tmp*
+
+# テストディレクトリ全体（テストはローカルでのみ使用）
+tests/
 
 # OpenCode セッション継続データ
 .omo/run-continuation/
@@ -37,23 +37,15 @@ tools/*
 
 # デバッグ・テスト用の一時ファイル (拡張子ベース)
 *.py
-!tests/e2e/*.py
 *.png
 *.yaml
-!tests/fixtures/*.yaml
 *.txt
-!tests/fixtures/*.txt
 !/.env.example
 
 # 拡張機能アセットは無視から除外
 !public/icons/*.png
 
-# テスト用デバッグプロファイル
-tests/e2e/debug-*
-
 # テスト結果・デバッグ画像
-test-results/
-*.png
 yse-error.png
 *.html
 !tools/debug_popup.html
