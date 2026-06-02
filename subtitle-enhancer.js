@@ -179,6 +179,8 @@ const SubtitleEnhancer = {
       this.captionBlocks = [];
       this.currentSentence = "";
       this.isFetching = false;
+      this.fetchBlocked = false;
+      this.fetchErrorCount = 0;
       setTimeout(() => this.fetchSubtitles(), 500);
       setTimeout(attachTimeUpdate, 1000);
     };
@@ -314,7 +316,7 @@ const SubtitleEnhancer = {
         this.stopDomWatch();
         this.updateDisplayFromTime();
       } else {
-        this.hideOriginalCaptions(false);
+        this.hideOriginalCaptions(true);
         this.startDomWatch();
       }
       if (this.captionBlocks.length === 0 && !this.isFetching && !this.fetchBlocked) {
@@ -394,9 +396,22 @@ const SubtitleEnhancer = {
         if (text && text !== this.domWatchLastText) {
           this.domWatchLastText = text;
           this.domWatchActive = true;
-          this.displaySentence(text);
+          const offset = Number(Settings.get("subtitleOffset")) || 0;
+          if (offset < 0) {
+            if (this._domWatchDisplayTimer) clearTimeout(this._domWatchDisplayTimer);
+            this._domWatchDisplayTimer = setTimeout(() => {
+              this._domWatchDisplayTimer = null;
+              this.displaySentence(text);
+            }, Math.abs(offset));
+          } else {
+            this.displaySentence(text);
+          }
         } else if (!text && this.domWatchLastText) {
           this.domWatchLastText = "";
+          if (this._domWatchDisplayTimer) {
+            clearTimeout(this._domWatchDisplayTimer);
+            this._domWatchDisplayTimer = null;
+          }
           this.hideOverlay();
         }
       }, 100);
@@ -408,6 +423,10 @@ const SubtitleEnhancer = {
       clearTimeout(this.domWatchTimer);
       this.domWatchTimer = null;
     }
+    if (this._domWatchDisplayTimer) {
+      clearTimeout(this._domWatchDisplayTimer);
+      this._domWatchDisplayTimer = null;
+    }
     if (this.yseCaptionObserver) {
       this.yseCaptionObserver.disconnect();
       this.yseCaptionObserver = null;
@@ -417,9 +436,16 @@ const SubtitleEnhancer = {
   },
 
   getCaptionWindow() {
-    return document.querySelector(
+    const cw = document.querySelector(
       ".caption-window, .ytp-caption-window, .ytp-caption-window-top, .ytp-caption-window-bottom"
     );
+    if (cw) {
+      const style = window.getComputedStyle(cw);
+      if (style.display === 'none' || style.visibility === 'hidden') {
+        return null;
+      }
+    }
+    return cw;
   },
 
   async fetchSubtitles() {

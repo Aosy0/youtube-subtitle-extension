@@ -159,11 +159,11 @@ const UIController = {
                     </label>
                     <div class="yse-range-container">
                         <input type="range" class="yse-setting-range" data-key="subtitleOffset"
-                            value="${Settings.get('subtitleOffset') || 0}" min="-5000" max="5000" step="100"
+                            value="${Settings.get('subtitleOffset') || 0}" min="-500" max="500" step="50"
                         >
                         <span style="display: flex; justify-content: space-between; font-size: 11px; color: #888; margin-top: 4px;">
-                            <span>早く表示 (-5000ms)</span>
-                            <span>遅く表示 (+5000ms)</span>
+                            <span>早く表示 (-500ms)</span>
+                            <span>遅く表示 (+500ms)</span>
                         </span>
                     </div>
                     <small style="color: #888; font-size: 12px; display: block; margin-top: 4px;">
@@ -333,6 +333,9 @@ const UIController = {
                     }
                     Settings.set(key, value);
                     SubtitleEnhancer.updateStyles();
+                    if (key === 'subtitleOffset') {
+                        SubtitleEnhancer.updateDisplayFromTime();
+                    }
                 });
             }
 
