@@ -263,7 +263,6 @@ const SubtitleEnhancer = {
       return;
     }
 
-    // ネイティブ日本語字幕が検出された場合は拡張機能の加工をスキップ
     if (this.nativeSubtitleMode) {
       if (this.yseOverlay && this.yseOverlay.style.display !== "none") {
         this.hideOverlay();
@@ -309,13 +308,13 @@ const SubtitleEnhancer = {
     }
 
     if (this.isSubtitleEnabled) {
-      this.hideOriginalCaptions(true);
       if (this.captionBlocks.length > 0) {
         // ブロックデータがある時は時間ベース表示（DOM監視を停止）
+        this.hideOriginalCaptions(true);
         this.stopDomWatch();
         this.updateDisplayFromTime();
       } else {
-        // ブロックデータがない時はDOM監視でYouTubeの表示を直接読む
+        this.hideOriginalCaptions(false);
         this.startDomWatch();
       }
       if (this.captionBlocks.length === 0 && !this.isFetching && !this.fetchBlocked) {
@@ -749,12 +748,14 @@ const SubtitleEnhancer = {
     }
     const video = document.querySelector("video");
     if (!video) return;
-    const offset = Settings.get("subtitleOffset") || 0;
-    const currentMs = video.currentTime * 1000 - offset;
+    const offset = Number(Settings.get("subtitleOffset")) || 0;
+    const videoMs = video.currentTime * 1000;
 
-    const block = this.captionBlocks.find(
-      (b) => currentMs >= b.start && currentMs <= b.end,
-    );
+    const block = this.captionBlocks.find((b) => {
+      const adjustedStart = b.start + offset;
+      const adjustedEnd = b.end + offset;
+      return videoMs >= adjustedStart && videoMs <= adjustedEnd;
+    });
 
     if (block) {
       if (this.currentSentence !== block.text) {

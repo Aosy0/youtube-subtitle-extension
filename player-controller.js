@@ -191,15 +191,15 @@ const PlayerController = {
         }
     },
 
-    setAutoTranslation(targetLang) {
+    setAutoTranslation(sourceLang, targetLang) {
         try {
             const player = this.player;
             if (player && player.setOption) {
                 player.setOption('captions', 'track', {
-                    'languageCode': targetLang,
+                    'languageCode': sourceLang,
                     'translationLanguage': {'languageCode': targetLang}
                 });
-                Logger.info(`自動翻訳を設定: ${targetLang}`);
+                Logger.info(`自動翻訳を設定: ${sourceLang} → ${targetLang}`);
             }
         } catch (e) {
             Logger.error('自動翻訳設定エラー:', e);
@@ -241,7 +241,7 @@ const PlayerController = {
                 (preferredTrack.baseUrl && preferredTrack.baseUrl.includes('tlang='));
 
             if (isTranslated) {
-                this.setAutoTranslation(preferredLang);
+                this.setAutoTranslation(preferredTrack.languageCode, preferredLang);
                 Logger.info(`自動翻訳字幕を選択: ${preferredTrack.languageCode}`);
             } else {
                 this.setSubtitleLanguage(preferredTrack.languageCode);
@@ -256,7 +256,7 @@ const PlayerController = {
 
         if (fallbackTrack) {
             if (autoTranslate) {
-                this.setAutoTranslation(preferredLang);
+                this.setAutoTranslation(fallbackTrack.languageCode, preferredLang);
                 Logger.info(`フォールバック字幕から自動翻訳: ${fallbackTrack.languageCode} → ${preferredLang}`);
             } else {
                 this.setSubtitleLanguage(fallbackTrack.languageCode);
@@ -267,7 +267,7 @@ const PlayerController = {
 
         if (autoTranslate && tracks.length > 0) {
             const firstTrack = tracks[0];
-            this.setAutoTranslation(preferredLang);
+            this.setAutoTranslation(firstTrack.languageCode, preferredLang);
             Logger.info(`字幕を自動翻訳: ${firstTrack.languageCode} → ${preferredLang}`);
             return;
         }
