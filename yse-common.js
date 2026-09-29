@@ -8,7 +8,7 @@
 // 設定定数
 // ============================================
 const CONFIG = {
-    VERSION: '1.1.0',
+    VERSION: '1.1.1',
     STORAGE_KEY: 'yse_settings',
     DEFAULT_SETTINGS: {
         enabled: true,
@@ -31,6 +31,22 @@ const CONFIG = {
         letterSpacing: 0.5
     }
 };
+
+// ============================================
+// YouTube動画ID取得（watch/shorts/live/embed対応）
+// ============================================
+function getYouTubeVideoId(urlString) {
+    try {
+        const u = new URL(urlString || location.href, location.href);
+        const v = u.searchParams.get('v');
+        if (v) return v;
+        const m = u.pathname.match(/^\/(?:shorts|live|embed)\/([\w-]+)/);
+        if (m) return m[1];
+        return null;
+    } catch (_) {
+        return null;
+    }
+}
 
 // ============================================
 // 設定管理（chrome.storage.local）
@@ -222,3 +238,4 @@ window.Settings = Settings;
 window.Logger = Logger;
 window.LogPanel = LogPanel;
 window.safeSetInnerHTML = safeSetInnerHTML;
+window.getYouTubeVideoId = getYouTubeVideoId;

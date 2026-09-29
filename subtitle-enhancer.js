@@ -15,6 +15,7 @@ const SubtitleEnhancer = {
   isSubtitleEnabled: false,
   currentCaptionWindow: null,
   captionBlocks: [],
+  captionBlocksVideoId: null,
   currentVideoId: null,
   isFetching: false,
   lastFetchTime: 0,
@@ -24,7 +25,6 @@ const SubtitleEnhancer = {
   _interceptHandler: null,
   _navigateHandler: null,
   _timeUpdateHandler: null,
-  _dragMouseMoveHandler: null,
   _dragMouseMoveHandler: null,
   _dragMouseUpHandler: null,
   _videoElement: null,
@@ -55,15 +55,23 @@ const SubtitleEnhancer = {
     if (!this._interceptHandler) {
       this._interceptHandler = (e) => {
         if (e.detail && e.detail.text) {
+          const currentVid = getYouTubeVideoId();
+          const dataVid = e.detail.url ? getYouTubeVideoId(e.detail.url) : null;
+          if (currentVid && dataVid && currentVid !== dataVid) {
+            Logger.debug(`別動画の字幕データを無視しました (${dataVid})`);
+            return;
+          }
           Logger.info(`ブリッジからインターセプトされた字幕データを受信しました (${e.detail.text.length}バイト)`);
           try {
             const data = JSON.parse(e.detail.text);
             if (data && data.events) {
-              this.captionBlocks = this.parseJson3(data);
-              this.stopDomWatch();
-              Logger.info(
-                `インターセプトした字幕の解析完了 (ブロック数: ${this.captionBlocks.length})`,
-              );
+              const blocks = this.parseJson3(data);
+              if (blocks.length > 0) {
+                this.captionBlocks = blocks;
+                this.captionBlocksVideoId = currentVid || dataVid || null;
+                this.stopDomWatch();
+                Logger.info(`インターセプトした字幕の解析完了 (ブロック数: ${blocks.length})`);
+              }
             }
           } catch (err) {
             Logger.error("インターセプトしたデータのパースに失敗:", err);
@@ -88,7 +96,10 @@ const SubtitleEnhancer = {
   },
 
   setNativeSubtitleMode(enabled) {
-    if (this.nativeSubtitleMode === enabled) return;
+    // 同じモードでもスタイル要素がDOMから失われている場合は再適用する
+    // （SPA遷移後のcleanupやYouTubeによるhead操作で要素が消えたケースの回復）
+    const styleInDom = !!document.getElementById("yse-native-subtitle-styles");
+    if (this.nativeSubtitleMode === enabled && (!enabled || styleInDom)) return;
     this.nativeSubtitleMode = enabled;
     if (enabled) {
       Logger.info("ネイティブ日本語字幕モード: 背景・フォントのみ適用します");
@@ -116,7 +127,7 @@ const SubtitleEnhancer = {
     const fontWeight = Settings.get("fontWeight");
     const captionWidth = Settings.get("captionWidth");
 
-    if (!this._nativeStyleElement) {
+    if (!this._nativeStyleElement || !this._nativeStyleElement.isConnected) {
       this._nativeStyleElement = document.createElement("style");
       this._nativeStyleElement.id = "yse-native-subtitle-styles";
       document.head.appendChild(this._nativeStyleElement);
@@ -340,7 +351,10 @@ const SubtitleEnhancer = {
     }
 
     if (this.isSubtitleEnabled) {
-      if (this.captionBlocks.length > 0) {
+      const currentVid = getYouTubeVideoId();
+      const blocksUsable = this.captionBlocks.length > 0 &&
+        (!this.captionBlocksVideoId || this.captionBlocksVideoId === currentVid);
+      if (blocksUsable) {
         // ブロックデータがある時は時間ベース表示（DOM監視を停止）
         this.hideOriginalCaptions(true);
         this.stopDomWatch();
@@ -348,10 +362,10 @@ const SubtitleEnhancer = {
         this.updateDisplayFromTime();
       } else {
         this.hideOriginalCaptions(true);
-        Logger.debug(`[checkState] DOM監視フォールバック: captionBlocks=0, isFetching=${this.isFetching}, fetchBlocked=${this.fetchBlocked}`);
+        Logger.debug(`[checkState] DOM監視フォールバック: captionBlocks=${this.captionBlocks.length}, isFetching=${this.isFetching}, fetchBlocked=${this.fetchBlocked}`);
         this.startDomWatch();
       }
-      if (this.captionBlocks.length === 0 && !this.isFetching && !this.fetchBlocked) {
+      if (!blocksUsable && !this.isFetching && !this.fetchBlocked) {
         this.fetchSubtitles();
       }
     } else {
@@ -411,20 +425,15 @@ const SubtitleEnhancer = {
         this.domWatchTimer = null;
         const cw = this.getCaptionWindow();
         if (!cw) return;
-        const segments = cw.querySelectorAll(
-          "span, .ytp-caption-segment, .caption-line"
-        );
-        let text = "";
-        if (segments.length > 0) {
-          const texts = [];
-          for (const seg of segments) {
-            const t = (seg.textContent || "").trim();
-            if (t) texts.push(t);
-          }
-          text = texts.join(" ");
-        } else {
-          text = (cw.textContent || "").trim();
+        const segEls = cw.querySelectorAll('.ytp-caption-segment');
+        const texts = [];
+        for (const seg of segEls) {
+          const t = (seg.textContent || '').trim();
+          if (!t) continue;
+          if (texts.length > 0 && texts[texts.length - 1] === t) continue;
+          texts.push(t);
         }
+        let text = texts.length > 0 ? joinCaptionSegments(texts) : (cw.textContent || '').trim();
         if (text && text !== this.domWatchLastText) {
           this.domWatchLastText = text;
           this.domWatchActive = true;
@@ -518,7 +527,12 @@ const SubtitleEnhancer = {
 
     if (this.currentVideoId !== videoId) {
       this.fetchErrorCount = 0;
-      this.captionBlocks = [];
+      // 遷移直後にブリッジが傍受した字幕ブロックを消さない。
+      // 別動画のデータが残っている場合のみ破棄する。
+      if (this.captionBlocksVideoId && this.captionBlocksVideoId !== videoId) {
+        this.captionBlocks = [];
+        this.captionBlocksVideoId = null;
+      }
       this.currentSubtitleLanguage = null;
     }
 
@@ -671,6 +685,7 @@ const SubtitleEnhancer = {
         this.captionBlocks = [];
       } else {
         this.captionBlocks = this.parseJson3(data);
+        this.captionBlocksVideoId = videoId;
         this.currentSubtitleLanguage = targetTrack.languageCode;
         this.currentTrackIsTranslated = needTranslation || (targetTrack.baseUrl && targetTrack.baseUrl.includes('tlang='));
         Logger.info(
@@ -709,7 +724,7 @@ const SubtitleEnhancer = {
     for (const ev of data.events) {
       if (!ev.segs) continue;
       const text = ev.segs
-        .map((s) => (s.utf8 || "").replace(/\n/g, " "))
+        .map((s) => normalizeCaptionNewlines(s.utf8 || ""))
         .join("");
       const trimmed = text.trim();
       if (!trimmed) continue;
@@ -812,12 +827,15 @@ const SubtitleEnhancer = {
   },
 
   updateDisplayFromTime() {
-    if (this.isFetching) return;
     if (!this.isSubtitleEnabled) return;
+    // ネイティブ字幕モード中はオーバーレイを出さない（二重表示防止）
+    if (this.nativeSubtitleMode) return;
     // ブロックデータがない時はDOM監視に任せる
     if (this.captionBlocks.length === 0) {
       return;
     }
+    const currentVid = getYouTubeVideoId();
+    if (this.captionBlocksVideoId && currentVid && this.captionBlocksVideoId !== currentVid) return;
     const video = document.querySelector("video");
     if (!video) return;
     const offset = Number(Settings.get("subtitleOffset")) || 0;
@@ -825,11 +843,12 @@ const SubtitleEnhancer = {
 
     Logger.debug(`[タイミング調整] offset=${offset}ms, videoTime=${videoMs.toFixed(0)}ms, blocks=${this.captionBlocks.length}`);
 
-    const block = this.captionBlocks.find((b) => {
-      const adjustedStart = b.start + offset;
-      const adjustedEnd = b.end + offset;
-      return videoMs >= adjustedStart && videoMs <= adjustedEnd;
-    });
+    // ブロックの終端は末尾に余韻(+300/+800ms)を持たせており前後が重複するため、
+    // 重複時はより新しい（startが遅い）ブロックを優先する
+    let block = null;
+    for (const b of this.captionBlocks) {
+      if (videoMs >= b.start + offset && videoMs <= b.end + offset) block = b;
+    }
 
     if (block) {
       if (this.currentSentence !== block.text) {
@@ -972,7 +991,7 @@ const SubtitleEnhancer = {
     }
 
     if (this.textElement) {
-      safeSetInnerHTML(this.textElement, seg.replace(/\n/g, "<br>"));
+      safeSetInnerHTML(this.textElement, escapeCaptionHtml(seg).replace(/\n/g, "<br>"));
     }
   },
 
@@ -1032,7 +1051,7 @@ const SubtitleEnhancer = {
     const interval = Math.max(1000, Math.floor(blockDuration / segments.length));
 
     if (this.textElement) {
-      safeSetInnerHTML(this.textElement, segments[0].replace(/\n/g, "<br>"));
+      safeSetInnerHTML(this.textElement, escapeCaptionHtml(segments[0]).replace(/\n/g, "<br>"));
     }
     this._segmentIndex = 1;
 
@@ -1112,7 +1131,7 @@ const SubtitleEnhancer = {
       }
     }
 
-    return lines.join("<br>");
+    return lines.map(escapeCaptionHtml).join("<br>");
   },
 
   hideOverlay() {
@@ -1274,7 +1293,14 @@ const SubtitleEnhancer = {
     this.currentCaptionWindow = null;
     this.isSubtitleEnabled = false;
     this.captionBlocks = [];
+    this.captionBlocksVideoId = null;
     this.currentVideoId = null;
+    this.currentSubtitleLanguage = null;
+    this.currentTrackIsTranslated = false;
+    // スタイル要素は_removeNativeStyles()で消えるため、フラグも戻す。
+    // 戻さないと次のネイティブ動画でsetNativeSubtitleMode(true)が
+    // 同一値ガードで早期returnし、スタイルが再適用されない。
+    this.nativeSubtitleMode = false;
     this.isFetching = false;
     this.fetchBlocked = false;
     this.teardownDomWatch();
@@ -1314,4 +1340,37 @@ const SubtitleEnhancer = {
   },
 };
 
+// 字幕セグメントの連結（CJKはスペースなし、英数字境界のみスペース）
+function joinCaptionSegments(texts) {
+  let out = '';
+  for (const raw of texts) {
+    const t = (raw || '').trim();
+    if (!t) continue;
+    if (!out) { out = t; continue; }
+    if (out === t) continue;
+    if (out.endsWith(t)) continue; // 末尾の重複（ローリング字幕）
+    if (out.startsWith(t)) continue; // 先頭の重複（再掲）
+    if (t.startsWith(out)) { out = t; continue; } // より長い後続で置換
+    const needsSpace = /[A-Za-z0-9,;:]$/.test(out) && /^[A-Za-z0-9]/.test(t);
+    out += (needsSpace ? ' ' : '') + t;
+  }
+  return out;
+}
+
+// 字幕データ内の改行を正規化（CJK間はスペースなし、英数字間はスペース）
+function normalizeCaptionNewlines(text) {
+  return (text || '').replace(/([^\s])\n+([^\s])/g, (m, a, b) => {
+    const latinBoundary = /[A-Za-z0-9]/.test(a) && /[A-Za-z0-9]/.test(b);
+    return a + (latinBoundary ? ' ' : '') + b;
+  });
+}
+
+// innerHTMLへ展開する字幕テキストのエスケープ
+function escapeCaptionHtml(text) {
+  return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 window.SubtitleEnhancer = SubtitleEnhancer;
+window.joinCaptionSegments = joinCaptionSegments;
+window.normalizeCaptionNewlines = normalizeCaptionNewlines;
+window.escapeCaptionHtml = escapeCaptionHtml;

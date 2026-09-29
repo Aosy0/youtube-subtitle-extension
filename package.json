@@ -1,6 +1,6 @@
 {
   "name": "youtube-subtitle-extension",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "YouTubeの字幕表示を改善するChrome拡張機能です。",
   "type": "module",
   "scripts": {

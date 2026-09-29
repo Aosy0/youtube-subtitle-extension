@@ -7,6 +7,7 @@ const PlayerController = {
     observers: [],
     _playerCheckInterval: null,
     _urlObserver: null,
+    _bridgeObserver: null,
     _initialized: false,
 
     init() {
@@ -16,6 +17,7 @@ const PlayerController = {
         }
         this._initialized = true;
         this.waitForPlayer();
+        this._watchBridgeData();
         Logger.info('プレーヤーコントローラーを初期化しました');
     },
 
@@ -72,6 +74,25 @@ const PlayerController = {
         this._urlObserver.observe(document, {subtree: true, childList: true});
     },
 
+    _watchBridgeData() {
+        const el = document.getElementById('yse-data-bridge');
+        if (!el) {
+            setTimeout(() => this._watchBridgeData(), 1000);
+            return;
+        }
+        if (this._bridgeObserver) this._bridgeObserver.disconnect();
+        let lastValue = el.getAttribute('data-player-response');
+        this._bridgeObserver = new MutationObserver(() => {
+            const value = el.getAttribute('data-player-response');
+            if (value && value !== lastValue) {
+                lastValue = value;
+                Logger.debug('ブリッジのプレーヤーデータが更新されました');
+                this.autoSelectSubtitle();
+            }
+        });
+        this._bridgeObserver.observe(el, { attributes: true, attributeFilter: ['data-player-response'] });
+    },
+
     cleanup() {
         if (this._playerCheckInterval) {
             clearInterval(this._playerCheckInterval);
@@ -80,6 +101,10 @@ const PlayerController = {
         if (this._urlObserver) {
             this._urlObserver.disconnect();
             this._urlObserver = null;
+        }
+        if (this._bridgeObserver) {
+            this._bridgeObserver.disconnect();
+            this._bridgeObserver = null;
         }
         this.player = null;
         this.video = null;
@@ -104,8 +129,14 @@ const PlayerController = {
                 const dataStr = bridge.getAttribute('data-player-response');
                 if (dataStr) {
                     try {
-                        playerResponse = JSON.parse(dataStr);
-                        Logger.info('ブリッジ要素からplayerResponseを取得しました');
+                        const payload = JSON.parse(dataStr);
+                        const currentVid = typeof getYouTubeVideoId === 'function' ? getYouTubeVideoId() : null;
+                        if (payload.videoId && currentVid && payload.videoId !== currentVid) {
+                            Logger.debug(`ブリッジデータが別動画(${payload.videoId})のため無視します`);
+                        } else {
+                            playerResponse = payload;
+                            Logger.info('ブリッジ要素からplayerResponseを取得しました');
+                        }
                     } catch (e) {}
                 }
             }
@@ -221,6 +252,16 @@ const PlayerController = {
         return null;
     },
 
+    _isTrackAlreadySelected(languageCode, translationLanguageCode) {
+        const current = this.getCurrentSubtitleTrack();
+        if (!current || current.languageCode !== languageCode) return false;
+        if (translationLanguageCode) {
+            return !!(current.translationLanguage &&
+                current.translationLanguage.languageCode === translationLanguageCode);
+        }
+        return !current.translationLanguage;
+    },
+
     autoSelectSubtitle() {
         const tracks = this.getSubtitleTracks();
         const preferredLang = Settings.get('preferredLanguage');
@@ -251,16 +292,23 @@ const PlayerController = {
             t.languageCode.startsWith(preferredLang));
 
         if (preferredTrack) {
-            const isTranslated = preferredTrack.kind === 'asr' ||
-                preferredTrack.kind === 'forced' ||
-                (preferredTrack.baseUrl && preferredTrack.baseUrl.includes('tlang='));
-
-            if (isTranslated) {
-                this.setAutoTranslation(preferredTrack.languageCode, preferredLang);
-                Logger.info(`自動翻訳字幕を選択: ${preferredTrack.languageCode}`);
+            const hasTlangParam = preferredTrack.baseUrl && preferredTrack.baseUrl.includes('tlang=');
+            if (hasTlangParam) {
+                // 翻訳済みURL → 翻訳として設定
+                if (this._isTrackAlreadySelected(preferredTrack.languageCode, preferredLang)) {
+                    Logger.debug('既に選択済みのためスキップ');
+                } else {
+                    this.setAutoTranslation(preferredTrack.languageCode, preferredLang);
+                    Logger.info(`自動翻訳字幕を選択: ${preferredTrack.languageCode}`);
+                }
             } else {
-                this.setSubtitleLanguage(preferredTrack.languageCode);
-                Logger.info(`優先言語の字幕を選択: ${preferredTrack.languageCode}`);
+                // 同一言語トラック（ASR含む）は直接選択
+                if (this._isTrackAlreadySelected(preferredTrack.languageCode)) {
+                    Logger.debug('既に選択済みのためスキップ');
+                } else {
+                    this.setSubtitleLanguage(preferredTrack.languageCode);
+                    Logger.info(`優先言語の字幕を選択: ${preferredTrack.languageCode}`);
+                }
             }
             return;
         }
@@ -271,19 +319,31 @@ const PlayerController = {
 
         if (fallbackTrack) {
             if (autoTranslate) {
-                this.setAutoTranslation(fallbackTrack.languageCode, preferredLang);
-                Logger.info(`フォールバック字幕から自動翻訳: ${fallbackTrack.languageCode} → ${preferredLang}`);
+                if (this._isTrackAlreadySelected(fallbackTrack.languageCode, preferredLang)) {
+                    Logger.debug('既に選択済みのためスキップ');
+                } else {
+                    this.setAutoTranslation(fallbackTrack.languageCode, preferredLang);
+                    Logger.info(`フォールバック字幕から自動翻訳: ${fallbackTrack.languageCode} → ${preferredLang}`);
+                }
             } else {
-                this.setSubtitleLanguage(fallbackTrack.languageCode);
-                Logger.info(`フォールバック言語の字幕を選択: ${fallbackTrack.languageCode}`);
+                if (this._isTrackAlreadySelected(fallbackTrack.languageCode)) {
+                    Logger.debug('既に選択済みのためスキップ');
+                } else {
+                    this.setSubtitleLanguage(fallbackTrack.languageCode);
+                    Logger.info(`フォールバック言語の字幕を選択: ${fallbackTrack.languageCode}`);
+                }
             }
             return;
         }
 
         if (autoTranslate && tracks.length > 0) {
             const firstTrack = tracks[0];
-            this.setAutoTranslation(firstTrack.languageCode, preferredLang);
-            Logger.info(`字幕を自動翻訳: ${firstTrack.languageCode} → ${preferredLang}`);
+            if (this._isTrackAlreadySelected(firstTrack.languageCode, preferredLang)) {
+                Logger.debug('既に選択済みのためスキップ');
+            } else {
+                this.setAutoTranslation(firstTrack.languageCode, preferredLang);
+                Logger.info(`字幕を自動翻訳: ${firstTrack.languageCode} → ${preferredLang}`);
+            }
             return;
         }
 

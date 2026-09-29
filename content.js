@@ -39,6 +39,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
     if (typeof SubtitleEnhancer !== 'undefined') {
       SubtitleEnhancer.captionBlocks = [];
+      SubtitleEnhancer.captionBlocksVideoId = null;
       SubtitleEnhancer.fetchSubtitles();
     }
     sendResponse({success: true});

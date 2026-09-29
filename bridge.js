@@ -19,11 +19,13 @@
         if (urlStr.includes('timedtext')) {
             console.log('[YSE-BRIDGE] timedtext XHRを検出しました');
             this.addEventListener('load', function() {
-                console.log('[YSE-BRIDGE] timedtext XHR完了:', this.status, this.responseText?.length || 0);
-                if (this.status === 200 && this.responseText) {
-                    interceptedSubtitleData = this.responseText;
+                let body = null;
+                try { body = this.responseText; } catch (_) {}
+                console.log('[YSE-BRIDGE] timedtext XHR完了:', this.status, body?.length || 0);
+                if (this.status === 200 && body) {
+                    interceptedSubtitleData = body;
                     document.dispatchEvent(new CustomEvent('YSE_INTERCEPTED_SUBTITLE', {
-                        detail: { text: this.responseText }
+                        detail: { text: body, url: this.responseURL || urlStr }
                     }));
                 }
             });
@@ -51,7 +53,7 @@
                         if (text) {
                             interceptedSubtitleData = text;
                             document.dispatchEvent(new CustomEvent('YSE_INTERCEPTED_SUBTITLE', {
-                                detail: { text }
+                                detail: { text, url: reqUrl }
                             }));
                         }
                     } catch (_) {}
@@ -87,6 +89,9 @@
 
         if (playerResponse) {
             const payload = {
+                // 応答自身が持つvideoIdを正とする（SPA遷移中はURLと応答がずれるため）
+                videoId: (playerResponse.videoDetails && playerResponse.videoDetails.videoId) ||
+                    (new URLSearchParams(location.search).get('v') || (location.pathname.match(/^\/(?:shorts|live)\/([\w-]+)/) || [])[1] || null),
                 captions: playerResponse.captions || null
             };
             bridge.setAttribute('data-player-response', JSON.stringify(payload));
