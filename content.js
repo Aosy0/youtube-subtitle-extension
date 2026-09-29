@@ -33,6 +33,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     } else {
       sendResponse({success: false, error: 'UIController not ready'});
     }
+  } else if (request.action === 'settingsUpdated') {
+    if (typeof PlayerController !== 'undefined') {
+      PlayerController.autoSelectSubtitle();
+    }
+    if (typeof SubtitleEnhancer !== 'undefined') {
+      SubtitleEnhancer.captionBlocks = [];
+      SubtitleEnhancer.fetchSubtitles();
+    }
+    sendResponse({success: true});
   }
   return true;
 });

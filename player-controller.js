@@ -206,6 +206,21 @@ const PlayerController = {
         }
     },
 
+    getCurrentSubtitleTrack() {
+        try {
+            const player = this.player;
+            if (player && player.getOption) {
+                const track = player.getOption('captions', 'track');
+                if (track && track.languageCode) {
+                    return track;
+                }
+            }
+        } catch (e) {
+            Logger.debug('現在の字幕トラック取得エラー:', e);
+        }
+        return null;
+    },
+
     autoSelectSubtitle() {
         const tracks = this.getSubtitleTracks();
         const preferredLang = Settings.get('preferredLanguage');

@@ -64,3 +64,7 @@ const context = await chromium.launchPersistentContext('./tmp-profile', {
 - **`npx playwright-cli`** (0.1.13): 簡易ブラウザ操作CLI
 - **`npx stagehand`** (3.2.1): AI駆動ブラウザ自動化（`@browserbasehq/stagehand`）
 - **`browser-use`**: Python製AIブラウザエージェント（https://github.com/browser-use/browser-use）。未インストール、必要に応じて `pip install browser-use`
+
+### システムツール
+
+- **uutils coreutils 0.8.0**（`C:\Program Files\coreutils\bin\`）: GNU coreutilsのRust実装。`head`, `tail`, `wc`, `cut`, `uniq`, `sort`, `cat`, `ls`, `cp`, `mv`, `rm`, `echo`, `pwd`, `date`, `basename`, `dirname` などが利用可能。PATHに追加済みのため `head.exe` のように直接実行できる。ただし `ls`, `cp`, `mv`, `rm`, `cat` はPowerShellエイリアスに隠れるため、フルパスか `& "C:\Program Files\coreutils\bin\ls.exe"` 形式で呼び出すこと。

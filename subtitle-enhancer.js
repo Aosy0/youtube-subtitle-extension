@@ -36,6 +36,9 @@ const SubtitleEnhancer = {
   _resizeObserver: null,
   nativeSubtitleMode: false,
   _nativeStyleElement: null,
+  currentSubtitleLanguage: null,
+  currentTrackIsTranslated: false,
+  _languageCheckInterval: null,
 
   init() {
     if (this._initialized) {
@@ -74,6 +77,14 @@ const SubtitleEnhancer = {
     this.setupDomWatch();
 
     Logger.info("字幕エンハンサーを初期化しました");
+  },
+
+  _reevaluateNativeSubtitleMode(tracks) {
+    if (!tracks || tracks.length === 0) return;
+    const nativeJapaneseTrack = tracks.find(t =>
+      t.languageCode.startsWith('ja') && t.kind !== 'asr' && t.kind !== 'forced'
+    );
+    this.setNativeSubtitleMode(!!nativeJapaneseTrack);
   },
 
   setNativeSubtitleMode(enabled) {
@@ -117,7 +128,7 @@ const SubtitleEnhancer = {
         .ytp-caption-window-top,
         .ytp-caption-window-bottom {
           font-family: ${fontFamily};
-          font-size: ${fontSize}px;
+          font-size: ${fontSize}px !important;
           color: ${fontColor};
           font-weight: ${fontWeight};
           line-height: ${lineHeight};
@@ -125,8 +136,8 @@ const SubtitleEnhancer = {
           max-width: ${captionWidth}vw;
         }
         .ytp-caption-segment {
-          font-family: ${fontFamily};
-          font-size: ${fontSize}px;
+          font-family: ${fontFamily} !important;
+          font-size: ${fontSize}px !important;
           color: ${fontColor};
           font-weight: ${fontWeight};
           background: ${bgColor};
@@ -287,6 +298,12 @@ const SubtitleEnhancer = {
         this.hideOverlay();
         this.lastText = "";
         this.currentSentence = "";
+        this._clearSegmentTimer();
+        this.stopDomWatch();
+        if (this._domWatchDisplayTimer) {
+          clearTimeout(this._domWatchDisplayTimer);
+          this._domWatchDisplayTimer = null;
+        }
         if (this.flushTimer) {
           clearTimeout(this.flushTimer);
           this.flushTimer = null;
@@ -299,6 +316,19 @@ const SubtitleEnhancer = {
       this.currentCaptionWindow = null;
       this.hideOriginalCaptions(false);
       return;
+    }
+
+    const currentTrack = PlayerController.getCurrentSubtitleTrack();
+    const currentLang = currentTrack ? currentTrack.languageCode : null;
+    if (currentLang && currentLang !== this.currentSubtitleLanguage) {
+      Logger.info(`字幕言語が変更: ${this.currentSubtitleLanguage || 'none'} → ${currentLang}`);
+      this.currentSubtitleLanguage = currentLang;
+      this.captionBlocks = [];
+      this.fetchErrorCount = 0;
+      this.fetchBlocked = false;
+      this.currentTrackIsTranslated = false;
+      const tracks = PlayerController.getSubtitleTracks();
+      this._reevaluateNativeSubtitleMode(tracks);
     }
 
     const captionWindow = document.querySelector(
@@ -314,9 +344,11 @@ const SubtitleEnhancer = {
         // ブロックデータがある時は時間ベース表示（DOM監視を停止）
         this.hideOriginalCaptions(true);
         this.stopDomWatch();
+        Logger.debug(`[checkState] ブロックベース表示: blocks=${this.captionBlocks.length}`);
         this.updateDisplayFromTime();
       } else {
         this.hideOriginalCaptions(true);
+        Logger.debug(`[checkState] DOM監視フォールバック: captionBlocks=0, isFetching=${this.isFetching}, fetchBlocked=${this.fetchBlocked}`);
         this.startDomWatch();
       }
       if (this.captionBlocks.length === 0 && !this.isFetching && !this.fetchBlocked) {
@@ -397,13 +429,21 @@ const SubtitleEnhancer = {
           this.domWatchLastText = text;
           this.domWatchActive = true;
           const offset = Number(Settings.get("subtitleOffset")) || 0;
-          if (offset < 0) {
+          if (offset > 0) {
+            Logger.debug(`[DOM監視] 字幕を${offset}ms遅延して表示`);
             if (this._domWatchDisplayTimer) clearTimeout(this._domWatchDisplayTimer);
             this._domWatchDisplayTimer = setTimeout(() => {
               this._domWatchDisplayTimer = null;
               this.displaySentence(text);
-            }, Math.abs(offset));
+            }, offset);
           } else {
+            if (offset < 0) {
+              Logger.warn(`[DOM監視] offset=${offset}ms: 字幕データ未取得のため「早く表示」はできません（DOM監視モードではYouTubeの字幕表示を待つ必要がある）`);
+            }
+            if (this._domWatchDisplayTimer) {
+              clearTimeout(this._domWatchDisplayTimer);
+              this._domWatchDisplayTimer = null;
+            }
             this.displaySentence(text);
           }
         } else if (!text && this.domWatchLastText) {
@@ -479,6 +519,7 @@ const SubtitleEnhancer = {
     if (this.currentVideoId !== videoId) {
       this.fetchErrorCount = 0;
       this.captionBlocks = [];
+      this.currentSubtitleLanguage = null;
     }
 
     this.currentVideoId = videoId;
@@ -630,8 +671,10 @@ const SubtitleEnhancer = {
         this.captionBlocks = [];
       } else {
         this.captionBlocks = this.parseJson3(data);
+        this.currentSubtitleLanguage = targetTrack.languageCode;
+        this.currentTrackIsTranslated = needTranslation || (targetTrack.baseUrl && targetTrack.baseUrl.includes('tlang='));
         Logger.info(
-          `字幕データの取得・解析が完了しました (VideoId: ${videoId}, ブロック数: ${this.captionBlocks.length})`,
+          `字幕データの取得・解析が完了 (VideoId: ${videoId}, 言語: ${targetTrack.languageCode}${this.currentTrackIsTranslated ? ' [翻訳]' : ''}, ブロック数: ${this.captionBlocks.length})`,
         );
       }
 
@@ -722,6 +765,9 @@ const SubtitleEnhancer = {
       // 文末判定を強化: 句読点で終わるか、文字数が多すぎるか、次のラインとのギャップが大きいなら区切る
       const trimmedAcc = accumulated.trimEnd();
       const endsWithPunctuation = /[。！？.!?]$/.test(trimmedAcc);
+      // 小数点誤認識防止：accumulatedが「数字.」で終わり、次のセグメントが数字で始まる場合は文末としない
+      const hasTrailingDecimal = /\d\.$/.test(trimmedAcc);
+      const nextStartsWithDigit = hasTrailingDecimal && i + 1 < deduped.length && /^\d/.test(deduped[i + 1].text);
       const sentenceCount = (trimmedAcc.match(/[。！？.!?]/g) || []).length;
       const charCount = trimmedAcc.length;
       const nextGap =
@@ -730,7 +776,7 @@ const SubtitleEnhancer = {
       let shouldSplit = false;
       if (nextGap > 1200) {
         shouldSplit = true;
-      } else if (endsWithPunctuation) {
+      } else if (endsWithPunctuation && !nextStartsWithDigit) {
         if (charCount >= 10 || sentenceCount >= 2) {
           shouldSplit = true;
         }
@@ -777,6 +823,8 @@ const SubtitleEnhancer = {
     const offset = Number(Settings.get("subtitleOffset")) || 0;
     const videoMs = video.currentTime * 1000;
 
+    Logger.debug(`[タイミング調整] offset=${offset}ms, videoTime=${videoMs.toFixed(0)}ms, blocks=${this.captionBlocks.length}`);
+
     const block = this.captionBlocks.find((b) => {
       const adjustedStart = b.start + offset;
       const adjustedEnd = b.end + offset;
@@ -786,6 +834,7 @@ const SubtitleEnhancer = {
     if (block) {
       if (this.currentSentence !== block.text) {
         this.currentSentence = block.text;
+        Logger.debug(`[タイミング調整] 字幕表示: "${block.text.substring(0, 30)}..." (start=${block.start}, end=${block.end})`);
         this.displaySentence(block.text);
       }
     } else {
@@ -1008,9 +1057,17 @@ const SubtitleEnhancer = {
     const MAX_LEN = 50;
     const sentences = [];
     let buffer = "";
-    for (const char of target) {
+    for (let i = 0; i < target.length; i++) {
+      const char = target[i];
       buffer += char;
       if (punkt.test(char)) {
+        // 小数点誤認識防止：数字.数字 または 数字.空白+数字 の場合は文末としない
+        const prevChar = i > 0 ? target[i - 1] : '';
+        const nextChar = i + 1 < target.length ? target[i + 1] : '';
+        const isDecimal = /\d/.test(prevChar) && ( /\d/.test(nextChar) || ( /\s/.test(nextChar) && i + 2 < target.length && /\d/.test(target[i + 2]) ) );
+        if (isDecimal) {
+          continue;
+        }
         sentences.push(buffer);
         buffer = "";
       }

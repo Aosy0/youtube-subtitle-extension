@@ -27,6 +27,10 @@ const UIController = {
                 e.preventDefault();
                 this.toggleSettings();
             }
+            if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'l') {
+                e.preventDefault();
+                LogPanel.show();
+            }
         };
         document.addEventListener('keydown', this._keydownHandler);
     },
@@ -159,15 +163,15 @@ const UIController = {
                     </label>
                     <div class="yse-range-container">
                         <input type="range" class="yse-setting-range" data-key="subtitleOffset"
-                            value="${Settings.get('subtitleOffset') || 0}" min="-500" max="500" step="50"
+                            value="${Settings.get('subtitleOffset') || 0}" min="-3000" max="3000" step="100"
                         >
                         <span style="display: flex; justify-content: space-between; font-size: 11px; color: #888; margin-top: 4px;">
-                            <span>早く表示 (-500ms)</span>
-                            <span>遅く表示 (+500ms)</span>
+                            <span>早く (-3000ms)</span>
+                            <span>遅く (+3000ms)</span>
                         </span>
                     </div>
                     <small style="color: #888; font-size: 12px; display: block; margin-top: 4px;">
-                        自動翻訳字幕の表示タイミングを調整します
+                        正の値で字幕を遅らせられます。音声より先に表示させるには字幕データの取得が必要です（PoT対応中）
                     </small>
                 </div>
 

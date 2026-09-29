@@ -91,9 +91,13 @@ const Logger = {
     _log(level, ...args) {
         const levels = { debug: 0, info: 1, warn: 2, error: 3 };
         if (levels[level] >= levels[this._logLevel]) {
+            const out = args.join(' ');
             console[level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log'](
-                this._prefix, ...args
+                this._prefix, out
             );
+            if (typeof LogPanel !== 'undefined') {
+                LogPanel._addLog(level, out);
+            }
         }
     },
 
@@ -109,6 +113,8 @@ const Logger = {
 const LogPanel = {
     _panel: null,
     _logContainer: null,
+    _buffer: [],
+    _maxBuffer: 500,
 
     init() {
         // Initialize if needed
@@ -158,22 +164,48 @@ const LogPanel = {
         header.querySelector('#yse-log-close').addEventListener('click', () => {
             this._panel.remove();
             this._panel = null;
+            this._logContainer = null;
         });
 
+        // バッファに溜まっているログを再生
+        this._flushBuffer();
         this._addLog('info', 'Log panel opened');
     },
 
     _addLog(level, ...args) {
+        const line = `[${new Date().toLocaleTimeString()}] [${level.toUpperCase()}] ${args.join(' ')}`;
+        if (this._logContainer) {
+            const entry = document.createElement('div');
+            entry.style.color = level === 'error' ? '#ff4444' : level === 'warn' ? '#ffaa00' : '#00ff00';
+            entry.textContent = line;
+            this._logContainer.appendChild(entry);
+            const MAX_LOG_ENTRIES = 100;
+            while (this._logContainer.children.length > MAX_LOG_ENTRIES) {
+                this._logContainer.removeChild(this._logContainer.firstChild);
+            }
+            this._logContainer.scrollTop = this._logContainer.scrollHeight;
+        } else {
+            this._buffer.push(line);
+            if (this._buffer.length > this._maxBuffer) {
+                this._buffer.shift();
+            }
+        }
+    },
+
+    _flushBuffer() {
         if (!this._logContainer) return;
-        const entry = document.createElement('div');
-        entry.style.color = level === 'error' ? '#ff4444' : level === 'warn' ? '#ffaa00' : '#00ff00';
-        entry.textContent = `[${new Date().toLocaleTimeString()}] [${level.toUpperCase()}] ${args.join(' ')}`;
-        this._logContainer.appendChild(entry);
+        for (const line of this._buffer) {
+            const entry = document.createElement('div');
+            entry.style.color = '#0f0';
+            entry.textContent = line;
+            this._logContainer.appendChild(entry);
+        }
         const MAX_LOG_ENTRIES = 100;
         while (this._logContainer.children.length > MAX_LOG_ENTRIES) {
             this._logContainer.removeChild(this._logContainer.firstChild);
         }
         this._logContainer.scrollTop = this._logContainer.scrollHeight;
+        this._buffer = [];
     }
 };
 
