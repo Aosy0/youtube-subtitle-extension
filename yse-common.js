@@ -8,7 +8,7 @@
 // 設定定数
 // ============================================
 const CONFIG = {
-    VERSION: '1.1.1',
+    VERSION: '1.1.2',
     STORAGE_KEY: 'yse_settings',
     DEFAULT_SETTINGS: {
         enabled: true,
@@ -46,6 +46,18 @@ function getYouTubeVideoId(urlString) {
     } catch (_) {
         return null;
     }
+}
+
+// ============================================
+// 手動アップロード字幕トラックの判定
+// ============================================
+// YouTubeのASR・自動翻訳パイプライン由来のトラックは baseUrl に caps=asr が付く。
+// これらは「自動生成字幕」として扱い、テキスト整形（オーバーレイ表示）の対象にする。
+function isManualSubtitleTrack(track) {
+    if (!track || !track.languageCode) return false;
+    if (track.kind === 'asr' || track.kind === 'forced') return false;
+    if (track.baseUrl && track.baseUrl.includes('caps=asr')) return false;
+    return true;
 }
 
 // ============================================
@@ -239,3 +251,4 @@ window.Logger = Logger;
 window.LogPanel = LogPanel;
 window.safeSetInnerHTML = safeSetInnerHTML;
 window.getYouTubeVideoId = getYouTubeVideoId;
+window.isManualSubtitleTrack = isManualSubtitleTrack;

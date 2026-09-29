@@ -273,8 +273,7 @@ const PlayerController = {
         // ネイティブ日本語字幕（自動生成ではない）を検出したら拡張機能の処理を無効化
         const nativeJapaneseTrack = tracks.find(t =>
             t.languageCode.startsWith('ja') &&
-            t.kind !== 'asr' &&
-            t.kind !== 'forced'
+            isManualSubtitleTrack(t)
         );
         if (nativeJapaneseTrack) {
             Logger.info('✅ ネイティブ日本語字幕を検出しました。拡張機能の字幕加工をスキップします');

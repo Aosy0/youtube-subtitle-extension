@@ -90,7 +90,7 @@ const SubtitleEnhancer = {
   _reevaluateNativeSubtitleMode(tracks) {
     if (!tracks || tracks.length === 0) return;
     const nativeJapaneseTrack = tracks.find(t =>
-      t.languageCode.startsWith('ja') && t.kind !== 'asr' && t.kind !== 'forced'
+      t.languageCode.startsWith('ja') && isManualSubtitleTrack(t)
     );
     this.setNativeSubtitleMode(!!nativeJapaneseTrack);
   },
@@ -1359,9 +1359,17 @@ function joinCaptionSegments(texts) {
 
 // 字幕データ内の改行を正規化（CJK間はスペースなし、英数字間はスペース）
 function normalizeCaptionNewlines(text) {
-  return (text || '').replace(/([^\s])\n+([^\s])/g, (m, a, b) => {
-    const latinBoundary = /[A-Za-z0-9]/.test(a) && /[A-Za-z0-9]/.test(b);
-    return a + (latinBoundary ? ' ' : '') + b;
+  if (!text) return '';
+  const isCJKChar = (ch) => /[\u3000-\u30ff\u4e00-\u9fff\uff00-\uffef]/.test(ch);
+  const hasCJK = isCJKChar(text);
+  return text.replace(/([^\s])\n+([^\s])/g, (m, a, b) => {
+    // CJK境界はスペースなしで連結
+    if (isCJKChar(a) || isCJKChar(b)) return a + b;
+    // CJK文脈内の英小文字同士は機械翻訳による語中分割とみなし、スペースなしで連結
+    // （例: 新しいHealt⏎hアプリ → 新しいHealthアプリ）
+    if (hasCJK && /[a-z]/.test(a) && /[a-z]/.test(b)) return a + b;
+    // それ以外（英文等）はスペースで連結
+    return a + ' ' + b;
   });
 }
 
