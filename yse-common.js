@@ -8,7 +8,7 @@
 // 設定定数
 // ============================================
 const CONFIG = {
-    VERSION: '1.1.2',
+    VERSION: '1.1.3',
     STORAGE_KEY: 'yse_settings',
     DEFAULT_SETTINGS: {
         enabled: true,
@@ -56,7 +56,10 @@ function getYouTubeVideoId(urlString) {
 function isManualSubtitleTrack(track) {
     if (!track || !track.languageCode) return false;
     if (track.kind === 'asr' || track.kind === 'forced') return false;
-    if (track.baseUrl && track.baseUrl.includes('caps=asr')) return false;
+    // 自動ダブ（多言語音声）付き動画の caps=asr トラックは自動翻訳字幕とみなす。
+    // 自動ダブがない動画（単一のオリジナル音声）のトラックは、caps=asr が付いていても
+    // 公式アップロードの多言語字幕として扱う（例: ゲーム/企業チャンネルの公式字幕）。
+    if (track._yseHasDubbedAudio && track.baseUrl && track.baseUrl.includes('caps=asr')) return false;
     return true;
 }
 

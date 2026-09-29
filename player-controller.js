@@ -183,12 +183,12 @@ const PlayerController = {
             const tracklistRenderer = captions.playerCaptionsTracklistRenderer;
             if (tracklistRenderer && tracklistRenderer.captionTracks) {
                 Logger.info(`${tracklistRenderer.captionTracks.length}件の字幕トラックを発見`);
-                return tracklistRenderer.captionTracks;
+                return this._tagCaptionTracks(tracklistRenderer.captionTracks, tracklistRenderer);
             }
 
             if (captions.captionTracks) {
                 Logger.info(`${captions.captionTracks.length}件の字幕トラックを発見`);
-                return captions.captionTracks;
+                return this._tagCaptionTracks(captions.captionTracks, tracklistRenderer || captions);
             }
 
             Logger.warn('字幕トラックが見つかりませんでした');
@@ -197,6 +197,15 @@ const PlayerController = {
             Logger.error('字幕トラック取得エラー:', e);
             return [];
         }
+    },
+
+    // 字幕トラックへ「自動ダブ（多言語音声）付き動画か」を付与する。
+    // 自動ダブ付き動画の caps=asr トラックはYouTubeの自動翻訳字幕と判定するため。
+    _tagCaptionTracks(tracks, renderer) {
+        const hasDubbedAudio = !!(renderer && (renderer.audioTracks || []).some(t => t.audioTrackId));
+        return tracks.map(t => (t && typeof t === 'object')
+            ? Object.assign({}, t, { _yseHasDubbedAudio: hasDubbedAudio })
+            : t);
     },
 
     setSubtitlesEnabled(enabled) {
