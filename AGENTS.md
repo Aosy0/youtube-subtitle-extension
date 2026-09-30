@@ -63,6 +63,7 @@ const context = await chromium.launchPersistentContext('./tmp-profile', {
 - **`npx playwright`** (1.59.1): E2Eテスト実行、ブラウザ自動化
 - **`npx playwright-cli`** (0.1.13): 簡易ブラウザ操作CLI
 - **`npx stagehand`** (3.2.1): AI駆動ブラウザ自動化（`@browserbasehq/stagehand`）
+- **`yt-dlp`** (2026.08.19): YouTube字幕・動画のダウンロード（字幕原本の取得用）。`pip install --user` で導入したため単体コマンドはPATH未登録だったが、`C:\Users\koboy\AppData\Local\Programs\Python\Python310\Scripts\yt-dlp.cmd`（シム）導入済みで `yt-dlp` 単体でも動作する。解決されない場合は `python -m yt_dlp` で呼ぶこと
 - **`browser-use`**: Python製AIブラウザエージェント（https://github.com/browser-use/browser-use）。未インストール、必要に応じて `pip install browser-use`
 
 ### システムツール
