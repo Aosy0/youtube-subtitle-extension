@@ -8,7 +8,7 @@
 // 設定定数
 // ============================================
 const CONFIG = {
-    VERSION: '1.1.3',
+    VERSION: '1.1.4',
     STORAGE_KEY: 'yse_settings',
     DEFAULT_SETTINGS: {
         enabled: true,

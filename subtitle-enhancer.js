@@ -752,6 +752,20 @@ const SubtitleEnhancer = {
     // 同一ブロック内での重複テキスト蓄積を防止（非連続重複対策）
     let blockSeenTexts = new Set();
 
+    // 蓄積テキスト内の最後の文末位置を返す（小数点の「.」は文末として扱わない）
+    const findLastSentenceEnd = (text) => {
+      for (let k = text.length - 1; k >= 0; k--) {
+        const ch = text[k];
+        if (ch === '。' || ch === '！' || ch === '？' || ch === '!' || ch === '?') return k;
+        if (ch === '.') {
+          const prev = text[k - 1] || '';
+          const next = text[k + 1] || '';
+          if (!(/\d/.test(prev) && /\d/.test(next))) return k;
+        }
+      }
+      return -1;
+    };
+
     for (let i = 0; i < deduped.length; i++) {
       const line = deduped[i];
       const startMs = line.start;
@@ -789,6 +803,7 @@ const SubtitleEnhancer = {
         i + 1 < deduped.length ? deduped[i + 1].start - endMs : Infinity;
 
       let shouldSplit = false;
+      let splitAtPunct = 0;
       if (nextGap > 1200) {
         shouldSplit = true;
       } else if (endsWithPunctuation && !nextStartsWithDigit) {
@@ -796,21 +811,46 @@ const SubtitleEnhancer = {
           shouldSplit = true;
         }
       } else if (charCount > 80) {
-        shouldSplit = true;
+        // 文末が来ないまま長くなった場合、蓄積の途中に文末があればそこで区切る。
+        // ブロック末尾で文が途中に切れて表示が一瞬で消える問題の対策
+        // （例:「…5万8,990ドル（＋」で切れて「諸費用）というのは…」が次ブロックになる）
+        const punctIdx = findLastSentenceEnd(trimmedAcc);
+        if (punctIdx === -1) {
+          shouldSplit = true; // 文末が無い（句読点なし字幕）→ 従来どおり強制分割
+        } else if (punctIdx < trimmedAcc.length - 1) {
+          splitAtPunct = punctIdx + 1;
+        } else {
+          shouldSplit = true;
+        }
       }
 
-      if (shouldSplit) {
-        const finalText = accumulated.trim().replace(/^[。！？.!?\s]+/, "");
-        if (finalText) {
-          blocks.push({
-            start: blockStart,
-            end: blockEnd + 300,
-            text: finalText,
-          });
+      if (shouldSplit || splitAtPunct > 0) {
+        if (splitAtPunct > 0) {
+          // 文末までの前半をブロック化し、残りは次ブロックの先頭に引き継ぐ
+          const headText = trimmedAcc.slice(0, splitAtPunct).trim();
+          if (headText) {
+            blocks.push({
+              start: blockStart,
+              end: startMs,
+              text: headText,
+            });
+          }
+          accumulated = accumulated.slice(splitAtPunct).trimStart();
+          blockStart = startMs;
+          // blockSeenTexts は残り部分の重複判定のためクリアしない
+        } else {
+          const finalText = accumulated.trim().replace(/^[。！？.!?\s]+/, "");
+          if (finalText) {
+            blocks.push({
+              start: blockStart,
+              end: blockEnd + 300,
+              text: finalText,
+            });
+          }
+          accumulated = "";
+          blockStart = -1;
+          blockSeenTexts = new Set();
         }
-        accumulated = "";
-        blockStart = -1;
-        blockSeenTexts = new Set();
       }
     }
 
