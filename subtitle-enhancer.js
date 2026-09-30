@@ -1366,7 +1366,7 @@ function normalizeCaptionNewlines(text) {
     // CJK境界はスペースなしで連結
     if (isCJKChar(a) || isCJKChar(b)) return a + b;
     // CJK文脈内の英小文字同士は機械翻訳による語中分割とみなし、スペースなしで連結
-    // （例: 新しいHealt⏎hアプリ → 新しいHealthアプリ）
+    // （例: 新しいDownloa⏎d → 新しいDownload）
     if (hasCJK && /[a-z]/.test(a) && /[a-z]/.test(b)) return a + b;
     // それ以外（英文等）はスペースで連結
     return a + ' ' + b;
