@@ -1,71 +1,63 @@
-## プロジェクト概要
-作業前に`README.md`を読み込んでください。
+# YouTube Subtitle Enhancer — エージェント向けガイド
 
-## アーキテクチャ
-- **2つの実行ワールド**（manifest.json参照）
-  - `bridge.js` → MAIN world, `document_start`（PoTトークン付与・fetchプロキシ）
-  - 他すべて → ISOLATED world, `document_end`
-- **ISOLATED worldロード順が重要**: `yse-common.js` が最初にロードされる必要がある（Settings, Logger, LogPanel, CONFIG, safeSetInnerHTML を提供）
+## プロジェクト概要
+YouTubeの字幕表示を改善するChrome拡張（Manifest V3）。
+**ビルド不要**で、root直下のJS/CSSを `chrome://extensions/` から直接読み込む。
+機能・設定の詳細は `README.md` を参照。`package.json` の依存は開発・検証用（拡張本体には不要）。
+
+## アーキテクチャ（変更前に必読）
+- **2つの実行ワールド**（`manifest.json`）
+  - `bridge.js` → MAIN world / `document_start`: プレーヤー内部データの取得、YouTube自身のtimedtext通信の傍受、fetchプロキシ
+  - その他のモジュール → ISOLATED world / `document_end`
+- **ロード順が重要**: `yse-common.js` が最初（`Settings` / `Logger` / `CONFIG` / `LogPanel` / `getYouTubeVideoId` / `isManualSubtitleTrack` などを提供）
 - 各モジュールは `window.*` でグローバル公開する形式
+- **字幕データの取得は3経路**（上から順にフォールバック）
+  1. YouTube自身のtimedtext通信の傍受（`YSE_INTERCEPTED_SUBTITLE`）— 主経路
+  2. ブリッジ経由のfetch（`YSE_FETCH_REQUEST/RESPONSE`）— PoT環境では0バイトになる場合あり
+  3. caption window のDOM監視（テキスト加工は限定的）
+- **字幕状態は動画IDで管理**: 傍受/取得したブロックは `captionBlocksVideoId` でタグ付けし、動画遷移時の混入・消失を防ぐ
+- **ネイティブ表示の判定**: `isManualSubtitleTrack()`（yse-common.js）。自動ダブ（多言語音声）付き動画の `caps=asr` トラックのみ自動翻訳字幕として整形対象にし、それ以外（公式多言語字幕・手動字幕）はYouTubeのネイティブ表示を維持
 
 ## 開発コマンド
 ```bash
-npm test            # vitest (tests/unit/**/*.test.js)
-npm run test:watch  # 監視モード
+npm test                          # vitest（tests/unit/**/*.test.js）+ 全JSの構文チェック
+npm run test:watch                # 監視モード
+node tools/verify-extension.mjs   # 実機検証（詳細は yse-live-verification スキル参照）
 ```
 
-## 重要な注意点
-- **ビルド不要**: `chrome://extensions/` で直接読み込む（rootのJS/CSSを直接参照）
-- 拡張機能ソースは**root直下の.jsファイル**
-- `package.json` の依存（stagehand, dotenv, zod）はテスト/自動化用。拡張機能本体には不要
-- アイコンは `icons/` に配置
+## 変更時の基本フロー
+1. `README.md` と対象モジュールを読んでから変更する
+2. `npm test` でグリーンを確認（`syntax-check` が全JSを走査する）
+3. 実装 → ユニットテスト追加 → `npm test`
+4. 実機検証: 対象動画＋両ブランチの回帰（整形対象/ネイティブ対象）— `yse-live-verification` スキル参照
+5. コミット（下記ルール）
 
 ## ファイル配置ルール
-- **デバッグ・検証スクリプト**（Playwright等による一時的な調査スクリプト）は `tools/` 配下に作成すること
-- `tests/` は **ユニットテスト（vitest）専用**のディレクトリ。E2Eスクリプトやデバッグスクリプトを配置しないこと
-- 一時プロファイル（`tmp-test*`、`test-profile*` 等）は `.gitignore` で無視対象
+- **拡張本体は root 直下**: `content.js` / `bridge.js` / `yse-common.js` / `player-controller.js` / `subtitle-enhancer.js` / `youtube-settings.js` / `ui-controller.js` / `styles.css` / `manifest.json`（UIは `popup/`、アイコンは `icons/`）
+- **デバッグ・検証スクリプトは `tools/`**（gitignore対象。出力先は `tools/_live/`）
+- **`tests/` はユニットテスト専用**（vitest + jsdom）。E2E・デバッグスクリプトを置かない。`tests/` 全体は .gitignore 対象（ローカル運用）
+- **プロジェクトスキルは `.claude/skills/`**（ローカル運用。本ファイルから参照する）
+- 一時プロファイル（`tmp-*`、`test-profile*` 等）は .gitignore 対象
 
 ## テスト
-- ユニット: `tests/unit/**/*.test.js`（jsdom環境）— 現在58件すべてパス
-- E2E: `tests/e2e/full/`（Playwright）— 未作成
-
-### 拡張機能の実機確認方法
-
-Playwrightで`--load-extension`フラグを使うのが最も確実:
-```js
-const context = await chromium.launchPersistentContext('./tmp-profile', {
-  headless: false,
-  args: [
-    '--disable-extensions-except=' + extPath,
-    '--load-extension=' + extPath,
-  ],
-});
-```
-
-### 既知の制限・課題
-- **Chrome DevTools MCP** ではcontent_scriptsが注入されない（CDP接続の制限）。拡張機能の実機確認には使えない。
-- **YouTube timedtext API** がPoT（Proof of Token）トークンを要求するようになった。拡張機能からのfetchはHTTP 200・0bytesで空レスポンスが返る。現在は `startDomWatch()`（YouTubeのcaption window DOM監視フォールバック）で字幕表示する設計だが、このパスの検証は未完了。
-- ビルド（vite）と直接読み込み（chrome://extensions/）は別フロー。ビルド経由でないとmanifestの競合に注意。
+- `npm test` は現在424件（`parseJson3` / `stability-fixes` / `syntax-check`）
+  - `syntax-check` は全JSファイルを `node --check` するため、構文エラーは必ず検出される
+- バグ修正時は再現条件をテストに落としてから直す。仕様変更時はテストも更新する
 
 ## コミット
-- バグ修正時は、バグが治ったことを確認してからコミットすること
-- コミットメッセージは日本語で簡潔に作成すること
+- バグ修正は「治ったことを確認してから」コミットする（ユニット＋実機検証）
+- メッセージは日本語で簡潔に。`Co-authored-by: OpenCode <noreply@opencode.ai>` を付与
+- **プッシュはしない**
 
-## ブラウザ操作ツール
+## プロジェクトスキル（`.claude/skills/`）
+| スキル | 用途 |
+|---|---|
+| `yse-live-verification` | 実動画での検証手順（拡張ロード / PoT / 広告 / SPA遷移 / トラック分類 / 検証スクリプト）。ブラウザ自動化ツール・CLI・システムツールの一覧もこちら |
+| `playwright-cli` | 汎用ブラウザ操作CLI |
 
-### MCPサーバー（opencode.jsonc定義）
+新しい知見が溜まったら該当スキルへ追記し、AGENTS.md を膨らませない。
 
-- **Chrome DevTools MCP（使用可能）**: `chrome-devtools_*` ツール。事前に `chrome.exe --remote-debugging-port=9224 [--load-extension=...]` でChromeを起動しておく。Service Workerの起動は確認できるがcontent scriptsが注入されない場合あり。
-- **Browser MCP（未接続）**: `browsermcp_browser_*` ツール。opencode.jsoncに設定済みだが現在接続できていない。
-
-### CLIツール
-
-- **`npx playwright`** (1.59.1): E2Eテスト実行、ブラウザ自動化
-- **`npx playwright-cli`** (0.1.13): 簡易ブラウザ操作CLI
-- **`npx stagehand`** (3.2.1): AI駆動ブラウザ自動化（`@browserbasehq/stagehand`）
-- **`yt-dlp`** (2026.08.19): YouTube字幕・動画のダウンロード（字幕原本の取得用）。`pip install --user` で導入したため単体コマンドはPATH未登録だったが、`C:\Users\koboy\AppData\Local\Programs\Python\Python310\Scripts\yt-dlp.cmd`（シム）導入済みで `yt-dlp` 単体でも動作する。解決されない場合は `python -m yt_dlp` で呼ぶこと
-- **`browser-use`**: Python製AIブラウザエージェント（https://github.com/browser-use/browser-use）。未インストール、必要に応じて `pip install browser-use`
-
-### システムツール
-
-- **uutils coreutils 0.8.0**（`C:\Program Files\coreutils\bin\`）: GNU coreutilsのRust実装。`head`, `tail`, `wc`, `cut`, `uniq`, `sort`, `cat`, `ls`, `cp`, `mv`, `rm`, `echo`, `pwd`, `date`, `basename`, `dirname` などが利用可能。PATHに追加済みのため `head.exe` のように直接実行できる。ただし `ls`, `cp`, `mv`, `rm`, `cat` はPowerShellエイリアスに隠れるため、フルパスか `& "C:\Program Files\coreutils\bin\ls.exe"` 形式で呼び出すこと。
+## 既知の制約（概要）
+- **PoT（Proof of Token）**: 拡張自身のfetchは `200 / 0バイト` になり得る。字幕は傍受が主経路（詳細はスキル）
+- **Chrome 137+**: `--load-extension` は無効。`Extensions.loadUnpacked`（ブラウザレベルCDP）を使う（詳細はスキル）
+- **ライブ配信・プレミア**: 検証対象外
