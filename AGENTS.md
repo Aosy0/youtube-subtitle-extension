@@ -44,11 +44,6 @@ node tools/verify-extension.mjs   # 実機検証（詳細は yse-live-verificati
   - `syntax-check` は全JSファイルを `node --check` するため、構文エラーは必ず検出される
 - バグ修正時は再現条件をテストに落としてから直す。仕様変更時はテストも更新する
 
-## コミット
-- バグ修正は「治ったことを確認してから」コミットする（ユニット＋実機検証）
-- メッセージは日本語で簡潔に。`Co-authored-by: OpenCode <noreply@opencode.ai>` を付与
-- **プッシュはしない**
-
 ## プロジェクトスキル（`.claude/skills/`）
 | スキル | 用途 |
 |---|---|
