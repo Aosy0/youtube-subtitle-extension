@@ -31,6 +31,7 @@
 .yse-caption-text {
     display: block !important;
     word-break: normal !important;
+    line-break: strict !important;
 }
 
 /* 元の字幕を非表示 */

@@ -7,7 +7,8 @@
     bridge.style.display = 'none';
     document.documentElement.appendChild(bridge);
 
-    let interceptedSubtitleData = null;
+    // 傍受した字幕データ（リスナー登録前に傍受した場合に備えて保持する）
+    let interceptedSubtitle = null; // { text, url }
 
     // ==========================================
     // XHRインターセプト（YouTubeのtimedtextレスポンスを直接取得）
@@ -23,9 +24,10 @@
                 try { body = this.responseText; } catch (_) {}
                 console.log('[YSE-BRIDGE] timedtext XHR完了:', this.status, body?.length || 0);
                 if (this.status === 200 && body) {
-                    interceptedSubtitleData = body;
+                    const url = this.responseURL || urlStr;
+                    interceptedSubtitle = { text: body, url };
                     document.dispatchEvent(new CustomEvent('YSE_INTERCEPTED_SUBTITLE', {
-                        detail: { text: body, url: this.responseURL || urlStr }
+                        detail: { text: body, url }
                     }));
                 }
             });
@@ -51,7 +53,7 @@
                     try {
                         const text = await clone.text();
                         if (text) {
-                            interceptedSubtitleData = text;
+                            interceptedSubtitle = { text, url: reqUrl };
                             document.dispatchEvent(new CustomEvent('YSE_INTERCEPTED_SUBTITLE', {
                                 detail: { text, url: reqUrl }
                             }));
@@ -100,8 +102,26 @@
 
     let updateInterval = setInterval(updateData, 2000);
 
+    // URLから動画IDを取得（ブリッジ内の最小実装）
+    function getVideoIdFromUrl(urlStr) {
+        try {
+            const u = new URL(urlStr || location.href, location.href);
+            const v = u.searchParams.get('v');
+            if (v) return v;
+            const m = u.pathname.match(/^\/(?:shorts|live|embed)\/([\w-]+)/);
+            return m ? m[1] : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
     function onNavigate() {
-        interceptedSubtitleData = null;
+        // 同一動画の傍受データは保持する（初回ロード直後のnavigate-finishで消さない）
+        const currentVid = getVideoIdFromUrl(location.href);
+        const dataVid = interceptedSubtitle ? getVideoIdFromUrl(interceptedSubtitle.url) : null;
+        if (!(currentVid && dataVid && currentVid === dataVid)) {
+            interceptedSubtitle = null;
+        }
         if (updateInterval) clearInterval(updateInterval);
         updateInterval = setInterval(updateData, 2000);
         updateData();
@@ -111,6 +131,17 @@
     document.addEventListener('yt-navigate-finish', onNavigate);
     window.addEventListener('load', updateData);
     setTimeout(updateData, 500);
+
+    // ==========================================
+    // 傍受済みデータの再送（リスナー登録前に傍受された場合の対策）
+    // ==========================================
+    document.addEventListener('YSE_GET_INTERCEPTED_SUBTITLE', () => {
+        if (interceptedSubtitle && interceptedSubtitle.text) {
+            document.dispatchEvent(new CustomEvent('YSE_INTERCEPTED_SUBTITLE', {
+                detail: { text: interceptedSubtitle.text, url: interceptedSubtitle.url }
+            }));
+        }
+    });
 
     // ==========================================
     // Fetch プロキシ（レスポンスインターセプトが効かない場合の冗長パス）

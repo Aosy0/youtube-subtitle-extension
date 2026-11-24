@@ -18,3 +18,4 @@ test-profile-tmp*
 *.txt
 *.png
 *.html
+!vendor/LICENSE-budoux.txt

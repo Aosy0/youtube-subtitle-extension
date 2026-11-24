@@ -29,9 +29,11 @@ const SubtitleEnhancer = {
   _dragMouseUpHandler: null,
   _videoElement: null,
 
-  _segmentTimer: null,
   _currentSegments: [],
-  _segmentIndex: 0,
+  _segmentIndex: -1,
+  _segmentBlockStart: 0,
+  _segmentBlockEnd: 0,
+  _segmentStartTimes: null,
   _pendingTruncationCheck: false,
   _resizeObserver: null,
   nativeSubtitleMode: false,
@@ -81,6 +83,10 @@ const SubtitleEnhancer = {
       document.addEventListener("YSE_INTERCEPTED_SUBTITLE", this._interceptHandler);
     }
 
+    // 初期ロード時は傍受がリスナー登録より先に完了していることがあるため、
+    // ブリッジに保持済みデータの再送を依頼する
+    document.dispatchEvent(new CustomEvent("YSE_GET_INTERCEPTED_SUBTITLE"));
+
     this.fetchSubtitles();
     this.setupDomWatch();
 
@@ -107,7 +113,7 @@ const SubtitleEnhancer = {
       this.hideOriginalCaptions(false);
       this._applyNativeStyles();
       this.stopDomWatch();
-      this._clearSegmentTimer();
+      this._resetSegmentState();
       this.currentSentence = "";
       this.lastText = "";
     } else {
@@ -197,8 +203,12 @@ const SubtitleEnhancer = {
     attachTimeUpdate();
 
     this._navigateHandler = () => {
+      // 初回ロード直後のnavigate-finishでも、傍受済みの同一動画ブロックは保持する
+      if (shouldDiscardBlocksForVideo(this.captionBlocksVideoId, getYouTubeVideoId())) {
+        this.captionBlocks = [];
+        this.captionBlocksVideoId = null;
+      }
       this.currentVideoId = null;
-      this.captionBlocks = [];
       this.currentSentence = "";
       this.isFetching = false;
       this.fetchBlocked = false;
@@ -309,7 +319,7 @@ const SubtitleEnhancer = {
         this.hideOverlay();
         this.lastText = "";
         this.currentSentence = "";
-        this._clearSegmentTimer();
+        this._resetSegmentState();
         this.stopDomWatch();
         if (this._domWatchDisplayTimer) {
           clearTimeout(this._domWatchDisplayTimer);
@@ -501,8 +511,11 @@ const SubtitleEnhancer = {
     const videoId = new URLSearchParams(window.location.search).get("v");
     if (!videoId) return;
 
-    // 同じ動画で既に取得済み、またはfetch中なら何もしない
-    if (this.currentVideoId === videoId && this.captionBlocks.length > 0)
+    // 同じ動画のブロックを既に持っている、またはfetch中なら何もしない
+    if (
+      this.captionBlocks.length > 0 &&
+      (this.currentVideoId === videoId || this.captionBlocksVideoId === videoId)
+    )
       return;
     if (this.isFetching) return;
     // PoT失敗が続いたらリトライしない（DOMフォールバックに任せる）
@@ -529,7 +542,7 @@ const SubtitleEnhancer = {
       this.fetchErrorCount = 0;
       // 遷移直後にブリッジが傍受した字幕ブロックを消さない。
       // 別動画のデータが残っている場合のみ破棄する。
-      if (this.captionBlocksVideoId && this.captionBlocksVideoId !== videoId) {
+      if (shouldDiscardBlocksForVideo(this.captionBlocksVideoId, videoId)) {
         this.captionBlocks = [];
         this.captionBlocksVideoId = null;
       }
@@ -751,6 +764,8 @@ const SubtitleEnhancer = {
     let blockEnd = 0;
     // 同一ブロック内での重複テキスト蓄積を防止（非連続重複対策）
     let blockSeenTexts = new Set();
+    // チャンクの累積位置と時刻（セグメント切り替えを実発話時刻に合わせるため）
+    let blockMarks = [];
 
     // 蓄積テキスト内の最後の文末位置を返す（小数点の「.」は文末として扱わない）
     const findLastSentenceEnd = (text) => {
@@ -788,6 +803,7 @@ const SubtitleEnhancer = {
           /[a-zA-Z0-9,;]$/.test(accumulated) &&
           /^[a-zA-Z0-9]/.test(clean);
         accumulated += (needsSpace ? " " : "") + clean;
+        blockMarks.push({ endPos: accumulated.length, t: startMs });
       }
       blockEnd = endMs;
 
@@ -816,7 +832,13 @@ const SubtitleEnhancer = {
         // （例:「…5万8,990ドル（＋」で切れて「諸費用）というのは…」が次ブロックになる）
         const punctIdx = findLastSentenceEnd(trimmedAcc);
         if (punctIdx === -1) {
-          shouldSplit = true; // 文末が無い（句読点なし字幕）→ 従来どおり強制分割
+          // 文末が無い場合も、日本語なら文節境界で切る
+          const phraseCut = findPhraseCutPosition(trimmedAcc, 80);
+          if (phraseCut > 0) {
+            splitAtPunct = phraseCut;
+          } else {
+            shouldSplit = true;
+          }
         } else if (punctIdx < trimmedAcc.length - 1) {
           splitAtPunct = punctIdx + 1;
         } else {
@@ -833,10 +855,21 @@ const SubtitleEnhancer = {
               start: blockStart,
               end: startMs,
               text: headText,
+              marks: blockMarks
+                .filter((m) => m.endPos <= splitAtPunct)
+                .concat([{ endPos: splitAtPunct, t: startMs }]),
             });
           }
-          accumulated = accumulated.slice(splitAtPunct).trimStart();
+          const remainderRaw = accumulated.slice(splitAtPunct);
+          const remainder = remainderRaw.trimStart();
+          const leadTrim = remainderRaw.length - remainder.length;
+          accumulated = remainder;
           blockStart = startMs;
+          // 残り部分のマークは位置を詰めて引き継ぐ
+          blockMarks = blockMarks
+            .filter((m) => m.endPos > splitAtPunct)
+            .map((m) => ({ endPos: Math.max(0, m.endPos - splitAtPunct - leadTrim), t: m.t }));
+          blockMarks.unshift({ endPos: 0, t: startMs });
           // blockSeenTexts は残り部分の重複判定のためクリアしない
         } else {
           const finalText = accumulated.trim().replace(/^[。！？.!?\s]+/, "");
@@ -845,11 +878,13 @@ const SubtitleEnhancer = {
               start: blockStart,
               end: blockEnd + 300,
               text: finalText,
+              marks: blockMarks,
             });
           }
           accumulated = "";
           blockStart = -1;
           blockSeenTexts = new Set();
+          blockMarks = [];
         }
       }
     }
@@ -860,7 +895,48 @@ const SubtitleEnhancer = {
         start: blockStart,
         end: blockEnd + 800,
         text: accumulated.trim().replace(/^[。！？.!?\s]+/, ""),
+        marks: blockMarks,
       });
+    }
+
+    // 最低表示時間の保証: 実効表示（次のブロック開始で打ち切られる分を考慮）が
+    // 短すぎるブロックは、近い方の隣接ブロックへテキストごと統合する。
+    // 前後とも離れている孤立ブロックは表示時間を延長する。
+    const MIN_DISPLAY_MS = 1200;
+    const MERGE_GAP_MS = 2000;
+    const joinTexts = (a, b) => {
+      const needsSpace = /[a-zA-Z0-9,;:]$/.test(a) && /^[a-zA-Z0-9]/.test(b);
+      return a + (needsSpace ? " " : "") + b;
+    };
+    let adjusted = true;
+    while (adjusted && blocks.length > 1) {
+      adjusted = false;
+      for (let i = 0; i < blocks.length; i++) {
+        const b = blocks[i];
+        const next = blocks[i + 1] || null;
+        const effectiveEnd = next ? Math.min(b.end, next.start) : b.end;
+        if (effectiveEnd - b.start >= MIN_DISPLAY_MS) continue;
+
+        const prev = blocks[i - 1] || null;
+        const prevGap = prev ? b.start - prev.end : Infinity;
+        const nextGap = next ? next.start - b.end : Infinity;
+
+        if (prev && prevGap <= MERGE_GAP_MS && prevGap <= nextGap) {
+          prev.text = joinTexts(prev.text, b.text);
+          prev.end = Math.max(prev.end, b.end);
+          blocks.splice(i, 1);
+        } else if (next && nextGap <= MERGE_GAP_MS) {
+          next.text = joinTexts(b.text, next.text);
+          next.start = Math.min(b.start, next.start);
+          next.end = Math.max(b.end, next.end);
+          blocks.splice(i, 1);
+        } else {
+          // 孤立した短いブロックは最低表示時間まで延長する
+          b.end = b.start + MIN_DISPLAY_MS;
+        }
+        adjusted = true;
+        break;
+      }
     }
 
     return blocks;
@@ -895,12 +971,15 @@ const SubtitleEnhancer = {
         this.currentSentence = block.text;
         Logger.debug(`[タイミング調整] 字幕表示: "${block.text.substring(0, 30)}..." (start=${block.start}, end=${block.end})`);
         this.displaySentence(block.text);
+      } else if (this._currentSegments.length > 1) {
+        // 経過時間に合ったセグメントへ更新する（再生速度に依存しない）
+        this._applySegmentForTime(videoMs - offset);
       }
     } else {
       // 表示すべき字幕がない時間帯
       if (this.currentSentence !== "") {
         this.currentSentence = "";
-        this._clearSegmentTimer();
+        this._resetSegmentState();
         this.hideOverlay();
       }
     }
@@ -926,13 +1005,12 @@ const SubtitleEnhancer = {
     }
   },
 
-  _clearSegmentTimer() {
-    if (this._segmentTimer) {
-      clearInterval(this._segmentTimer);
-      this._segmentTimer = null;
-    }
+  _resetSegmentState() {
     this._currentSegments = [];
-    this._segmentIndex = 0;
+    this._segmentIndex = -1;
+    this._segmentBlockStart = 0;
+    this._segmentBlockEnd = 0;
+    this._segmentStartTimes = null;
   },
 
   _isTextTruncated(element, maxLines) {
@@ -963,88 +1041,21 @@ const SubtitleEnhancer = {
   },
 
   _splitIntoSegments(text, maxLines) {
-    const target = text.trim();
-    if (!target) return [];
-
-    const punkt = /[。！？.!?]/;
-    const splitChars = /[、，,。！？.!? \t]/;
-
-    if (!punkt.test(target) && target.length <= 30) {
-      return [target];
-    }
-
-    const segments = [];
-    let buffer = "";
-    for (const char of target) {
-      buffer += char;
-      if (punkt.test(char)) {
-        segments.push(buffer);
-        buffer = "";
-      }
-    }
-    if (buffer.trim()) segments.push(buffer);
-
-    const finalSegments = [];
-    for (const seg of segments) {
-      if (seg.length <= 40) {
-        finalSegments.push(seg);
-        continue;
-      }
-      let current = seg;
-      while (current.length > 40) {
-        let mid = Math.floor(current.length / 2);
-        let splitAt = mid;
-        for (let i = mid; i < current.length - 1; i++) {
-          if (splitChars.test(current[i])) {
-            splitAt = i + 1;
-            break;
-          }
-        }
-        finalSegments.push(current.slice(0, splitAt));
-        current = current.slice(splitAt);
-      }
-      if (current.trim()) finalSegments.push(current);
-    }
-
-    if (finalSegments.length < 2 && target.length > 50) {
-      const mid = Math.floor(target.length / 2);
-      return [target.slice(0, mid), target.slice(mid)];
-    }
-
-    return finalSegments.length > 0 ? finalSegments : [text];
-  },
-
-  _showNextSegment(block) {
-    if (!this._currentSegments.length) return;
-
-    if (this._segmentIndex >= this._currentSegments.length) {
-      this._clearSegmentTimer();
-      return;
-    }
-
-    const seg = this._currentSegments[this._segmentIndex];
-    this._segmentIndex++;
-
-    const video = document.querySelector("video");
-    if (video && video.paused) {
-      return;
-    }
-
-    if (this.textElement) {
-      safeSetInnerHTML(this.textElement, escapeCaptionHtml(seg).replace(/\n/g, "<br>"));
-    }
+    // 文字数ではなくBudouXの文節境界を優先して分割する
+    // （maxLinesは呼び出し互換のため残している）
+    return layoutSubtitleText(text, 40, "segments");
   },
 
   displaySentence(text, forcedMaxLines) {
     if (!this.yseOverlay) return;
     if (!this.isSubtitleEnabled || !text || !text.trim()) {
-      this._clearSegmentTimer();
+      this._resetSegmentState();
       this.hideOverlay();
       return;
     }
 
     this._setupResizeObserver();
-    this._clearSegmentTimer();
+    this._resetSegmentState();
 
     const maxLines = forcedMaxLines !== undefined ? forcedMaxLines : Settings.get("maxLines");
 
@@ -1074,31 +1085,49 @@ const SubtitleEnhancer = {
   },
 
   _startSegmentDisplay(text, maxLines) {
-    this._clearSegmentTimer();
+    this._resetSegmentState();
 
     const segments = this._splitIntoSegments(text, maxLines);
     if (segments.length <= 1) return;
 
     this._currentSegments = segments;
-    this._segmentIndex = 0;
 
     const block = this.captionBlocks.find(
       (b) => this.currentSentence === b.text
     );
+    if (block) {
+      this._segmentBlockStart = block.start;
+      this._segmentBlockEnd = block.end;
+      this._segmentStartTimes = computeSegmentStartTimes(text, segments, block.marks);
+    } else {
+      this._segmentStartTimes = null;
+    }
 
     const video = document.querySelector("video");
-    const blockDuration = block ? block.end - block.start : 5000;
-    const interval = Math.max(1000, Math.floor(blockDuration / segments.length));
+    const offset = Number(Settings.get("subtitleOffset")) || 0;
+    this._applySegmentForTime((video ? video.currentTime * 1000 : 0) - offset);
+  },
 
+  // 経過時間に応じたセグメントを表示する。
+  // タイマーではなくメディア時間で決めるため、再生速度・シーク・一時停止に追従する
+  _applySegmentForTime(videoMs) {
+    if (this._currentSegments.length <= 1) return;
+    const idx =
+      this._segmentStartTimes && this._segmentStartTimes.length === this._currentSegments.length
+        ? getSegmentIndexFromStartTimes(videoMs, this._segmentStartTimes)
+        : getSegmentIndexForTime(
+            videoMs,
+            this._segmentBlockStart,
+            this._segmentBlockEnd,
+            this._currentSegments.length
+          );
+    if (idx === this._segmentIndex) return;
+    this._segmentIndex = idx;
     if (this.textElement) {
-      safeSetInnerHTML(this.textElement, escapeCaptionHtml(segments[0]).replace(/\n/g, "<br>"));
-    }
-    this._segmentIndex = 1;
-
-    if (segments.length > 1) {
-      this._segmentTimer = setInterval(() => {
-        this._showNextSegment(block);
-      }, interval);
+      safeSetInnerHTML(
+        this.textElement,
+        escapeCaptionHtml(this._currentSegments[idx].trim()).replace(/\n/g, "<br>")
+      );
     }
   },
 
@@ -1106,72 +1135,10 @@ const SubtitleEnhancer = {
     const target = text.trim();
     if (!target) return "";
 
-    const punkt = /[。！？.!?]/;
-    const hasPunctuation = punkt.test(target);
-
-    if (!hasPunctuation) {
-      return target;
-    }
-
-    const MAX_LEN = 50;
-    const sentences = [];
-    let buffer = "";
-    for (let i = 0; i < target.length; i++) {
-      const char = target[i];
-      buffer += char;
-      if (punkt.test(char)) {
-        // 小数点誤認識防止：数字.数字 または 数字.空白+数字 の場合は文末としない
-        const prevChar = i > 0 ? target[i - 1] : '';
-        const nextChar = i + 1 < target.length ? target[i + 1] : '';
-        const isDecimal = /\d/.test(prevChar) && ( /\d/.test(nextChar) || ( /\s/.test(nextChar) && i + 2 < target.length && /\d/.test(target[i + 2]) ) );
-        if (isDecimal) {
-          continue;
-        }
-        sentences.push(buffer);
-        buffer = "";
-      }
-    }
-    if (buffer) sentences.push(buffer);
-
-    const lines = [];
-    for (const sentence of sentences) {
-      const bracketMatch = sentence.match(/\[.*?\]/);
-      if (bracketMatch) {
-        const before = sentence.slice(0, bracketMatch.index);
-        const tag = bracketMatch[0];
-        const after = sentence.slice(bracketMatch.index + tag.length);
-        if (before.trim()) lines.push(before.trim());
-        lines.push(tag);
-        if (after.trim()) lines.push(after.trim());
-      } else if (sentence.length <= MAX_LEN) {
-        lines.push(sentence);
-      } else {
-        let remaining = sentence;
-        while (remaining.length > MAX_LEN) {
-          let cutAt = MAX_LEN;
-          let lastSpace = remaining.lastIndexOf(' ', cutAt);
-          if (lastSpace > 0) {
-            cutAt = lastSpace;
-          } else {
-            for (let i = cutAt; i > 0; i--) {
-              const prevIsAlpha = /[a-zA-Z]/.test(remaining[i - 1]);
-              const currIsAlpha = /[a-zA-Z]/.test(remaining[i]);
-              if (prevIsAlpha !== currIsAlpha) {
-                cutAt = i;
-                break;
-              }
-            }
-          }
-          lines.push(remaining.slice(0, cutAt));
-          remaining = remaining.slice(cutAt).trimStart();
-        }
-        if (remaining) {
-          lines.push(remaining);
-        }
-      }
-    }
-
-    return lines.map(escapeCaptionHtml).join("<br>");
+    // 文単位に分けたうえで、50文字を超える文はBudouXの文節境界で折る
+    // （maxLinesは呼び出し互換のため残している）
+    const lines = layoutSubtitleText(target, 50, "lines");
+    return lines.map((line) => escapeCaptionHtml(line.trim())).join("<br>");
   },
 
   hideOverlay() {
@@ -1344,7 +1311,7 @@ const SubtitleEnhancer = {
     this.isFetching = false;
     this.fetchBlocked = false;
     this.teardownDomWatch();
-    this._clearSegmentTimer();
+    this._resetSegmentState();
     this.hideOverlay();
     this.hideOriginalCaptions(false);
 
@@ -1379,6 +1346,250 @@ const SubtitleEnhancer = {
     Logger.info("字幕エンハンサーをクリーンアップしました");
   },
 };
+
+/**
+ * 字幕テキストを文節境界（BudouX）優先で改行・セグメント分割する。
+ * BudouXが読み込まれていない場合は従来の句読点・文字数ヒューリスティックに
+ * フォールバックする。
+ *
+ * @param {string} text 対象テキスト
+ * @param {number} maxLen 1行（lines）または1セグメント（segments）の目安文字数
+ * @param {'lines'|'segments'} mode
+ * @returns {string[]} 行またはセグメントの配列（元テキストの連続した部分文字列）
+ */
+function layoutSubtitleText(text, maxLen = 50, mode = "lines") {
+  const target = String(text || "").trim();
+  if (!target) return [];
+
+  const JAPANESE_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/;
+  const OPEN_BRACKETS = new Set(
+    "（「『【〔〈《［｛".split("").concat(["(", "[", "\u007B"]),
+  );
+  const CLOSE_BRACKETS = new Set(
+    "）」』】〕〉》］｝".split("").concat([")", "]", "\u007D"]),
+  );
+  // 行頭に来てはいけない文字（句読点・閉じ括弧）
+  const NO_LINE_START = new Set(
+    "、。，．,.!?！？:;：；…）」』】〕〉》］｝"
+      .split("")
+      .concat([")", "]", "\u007D"]),
+  );
+  // 行末に来てはいけない文字（開き括弧）
+  const NO_LINE_END = OPEN_BRACKETS;
+
+  const isJapanese = (value) => JAPANESE_RE.test(value);
+
+  const isInsideBrackets = (value, pos) => {
+    let depth = 0;
+    for (let i = 0; i < pos; i++) {
+      if (OPEN_BRACKETS.has(value[i])) depth++;
+      else if (CLOSE_BRACKETS.has(value[i])) depth = Math.max(0, depth - 1);
+    }
+    return depth > 0;
+  };
+
+  const isSafeBreak = (value, pos) => {
+    if (pos <= 0 || pos >= value.length) return false;
+    const prev = value[pos - 1];
+    const next = value[pos];
+    // 禁則処理
+    if (NO_LINE_START.has(next) || NO_LINE_END.has(prev)) return false;
+    // 英単語・数値の途中では切らない
+    if (/[A-Za-z0-9]/.test(prev) && /[A-Za-z0-9]/.test(next)) return false;
+    // 括弧・引用の内側では切らない
+    if (isInsideBrackets(value, pos)) return false;
+    return true;
+  };
+
+  const getPhraseBoundaries = (value) => {
+    if (!isJapanese(value)) return [];
+    const parser = typeof window !== "undefined" ? window.BudouX : null;
+    if (!parser || typeof parser.parseBoundaries !== "function") return [];
+    try {
+      return parser
+        .parseBoundaries(value)
+        .filter((pos) => Number.isInteger(pos) && pos > 0 && pos < value.length);
+    } catch (e) {
+      return [];
+    }
+  };
+
+  // 小数点・桁区切りの「.」「,」は文末・区切りとして扱わない
+  const isDecimalPunctuation = (value, pos) => {
+    const prev = value[pos - 2] || "";
+    const next = value[pos] || "";
+    return /[.,]/.test(value[pos - 1]) && /\d/.test(prev) && /\d/.test(next);
+  };
+
+  const splitSentences = (value) => {
+    const sentences = [];
+    let buffer = "";
+    for (let i = 0; i < value.length; i++) {
+      const char = value[i];
+      buffer += char;
+      if (!/[。！？.!?]/.test(char)) continue;
+      // 「...」は文末ではなく間（ポーズ）として扱う
+      if (char === "." && (value[i - 1] === "." || value[i + 1] === ".")) {
+        continue;
+      }
+      const prevChar = i > 0 ? value[i - 1] : "";
+      const nextChar = i + 1 < value.length ? value[i + 1] : "";
+      const isDecimal =
+        /\d/.test(prevChar) &&
+        (/\d/.test(nextChar) ||
+          (/\s/.test(nextChar) &&
+            i + 2 < value.length &&
+            /\d/.test(value[i + 2])));
+      if (isDecimal) continue;
+      sentences.push(buffer);
+      buffer = "";
+    }
+    if (buffer) sentences.push(buffer);
+    return sentences;
+  };
+
+  const splitBracketTag = (sentence) => {
+    const match = sentence.match(/\[.*?\]/);
+    if (!match) return [sentence];
+    const before = sentence.slice(0, match.index).trim();
+    const tag = match[0];
+    const after = sentence.slice(match.index + tag.length).trim();
+    return [before, tag, after].filter(Boolean);
+  };
+
+  const collectCandidates = (value, phraseBoundaries) => {
+    const candidates = new Set(phraseBoundaries);
+    for (let i = 1; i < value.length; i++) {
+      const prev = value[i - 1];
+      if (/[。、，！？!?.,;:…]/.test(prev) && !isDecimalPunctuation(value, i)) {
+        // 省略記号は最後のドットの後だけ候補にする
+        if (prev === ".") {
+          const isEllipsisEnd = value[i - 2] === "." && value[i] !== ".";
+          if (!isEllipsisEnd) continue;
+        }
+        candidates.add(i);
+      }
+      // 日本語混じりの文では英字スペースを優先候補にしない
+      // （「iPhone 18 Pro Max」のような製品名の途中で切れないように）
+      if (/\s/.test(value[i]) && !isJapanese(value)) candidates.add(i);
+    }
+    return [...candidates]
+      .filter((pos) => isSafeBreak(value, pos))
+      .sort((a, b) => a - b);
+  };
+
+  const chooseCut = (value, start, limit, candidates) => {
+    const hardLimit = Math.min(value.length, start + limit);
+    const softLimit = Math.min(
+      value.length,
+      start + Math.ceil(limit * 1.25),
+    );
+    let within = -1;
+    let beyond = -1;
+    for (const pos of candidates) {
+      if (pos <= start) continue;
+      if (pos <= hardLimit) {
+        within = pos;
+      } else {
+        if (pos <= softLimit && beyond < 0) beyond = pos;
+        break;
+      }
+    }
+    // 極端に短い行になるくらいなら、少しはみ出しても文節境界を優先する
+    if (beyond > 0 && (within < 0 || within - start < 10)) return beyond;
+    return within;
+  };
+
+  const fallbackCut = (value, start, limit) => {
+    const hardLimit = Math.min(value.length, start + limit);
+    if (hardLimit <= start) return value.length;
+
+    for (let i = hardLimit; i > start; i--) {
+      if (/\s/.test(value[i])) return i;
+    }
+    for (let i = hardLimit; i > start + 1; i--) {
+      const prevIsAlpha = /[A-Za-z]/.test(value[i - 1]);
+      const currIsAlpha = /[A-Za-z]/.test(value[i]);
+      if (prevIsAlpha !== currIsAlpha) return i;
+    }
+    for (let i = hardLimit; i > start + 1; i--) {
+      if (isSafeBreak(value, i)) return i;
+    }
+
+    let cut = hardLimit;
+    // サロゲートペアを分割しない
+    if (/[\uD800-\uDBFF]/.test(value[cut - 1])) cut--;
+    return Math.max(start + 1, cut);
+  };
+
+  const pushWrapped = (part, limit, out) => {
+    if (!part) return;
+    if (part.length <= limit) {
+      out.push(part);
+      return;
+    }
+
+    const candidates = collectCandidates(part, getPhraseBoundaries(part));
+    let start = 0;
+    let guard = 0;
+    while (part.length - start > limit) {
+      if (guard++ > 1000) break;
+      let cut = chooseCut(part, start, limit, candidates);
+      if (cut <= start) cut = fallbackCut(part, start, limit);
+      if (cut <= start) cut = Math.min(part.length, start + limit);
+      out.push(part.slice(start, cut));
+      start = cut;
+    }
+    if (start < part.length) out.push(part.slice(start));
+  };
+
+  const out = [];
+  for (const sentence of splitSentences(target)) {
+    if (!sentence) continue;
+    if (mode === "lines") {
+      // 従来どおり [タグ] は独立した行にする
+      for (const part of splitBracketTag(sentence)) {
+        pushWrapped(part, maxLen, out);
+      }
+    } else {
+      const before = out.length;
+      pushWrapped(sentence, maxLen, out);
+      // 長い一文の末尾が数文字だけになる場合、前の断片と結合して
+      // 一瞬だけ表示されるセグメントを避ける
+      if (out.length - before >= 2) {
+        const last = out[out.length - 1];
+        const prev = out[out.length - 2];
+        if (
+          last.length < 10 &&
+          prev.length + last.length <= Math.ceil(maxLen * 1.25)
+        ) {
+          out.splice(out.length - 2, 2, prev + last);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * 80文字超で文末が無いブロックを、日本語の文節境界で切る位置を返す。
+ * BudouXが無い、または境界が見つからない場合は -1（従来動作）。
+ */
+function findPhraseCutPosition(text, maxLen) {
+  const target = String(text || "").trimEnd();
+  if (!target || !/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/.test(target)) {
+    return -1;
+  }
+  const parser = typeof window !== "undefined" ? window.BudouX : null;
+  if (!parser || typeof parser.parseBoundaries !== "function") return -1;
+
+  const parts = layoutSubtitleText(target, maxLen, "segments");
+  if (parts.length < 2) return -1;
+  // 極端に短いブロックを作らない
+  if (parts[0].length < Math.floor(maxLen * 0.5)) return -1;
+  if (parts[0].length >= target.length) return -1;
+  return parts[0].length;
+}
 
 // 字幕セグメントの連結（CJKはスペースなし、英数字境界のみスペース）
 function joinCaptionSegments(texts) {
@@ -1418,7 +1629,64 @@ function escapeCaptionHtml(text) {
   return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// ブロック内の経過時間から表示すべきセグメントindexを求める。
+// メディア時間ベースなので再生速度（playbackRate）・シーク・一時停止に追従する。
+function getSegmentIndexForTime(videoMs, startMs, endMs, segmentCount) {
+  if (!segmentCount || segmentCount <= 1) return 0;
+  const duration = endMs - startMs;
+  if (!(duration > 0)) return 0;
+  const ratio = (videoMs - startMs) / duration;
+  if (ratio <= 0) return 0;
+  const idx = Math.floor(ratio * segmentCount);
+  return idx >= segmentCount ? segmentCount - 1 : idx;
+}
+
+// ブロックが現在の動画と別動画のものかどうか（別動画のときだけ破棄する）
+// 初回ロード直後の傍受データをnavigate-finishで消さないための判定
+function shouldDiscardBlocksForVideo(blocksVideoId, currentVideoId) {
+  return !!(blocksVideoId && currentVideoId && blocksVideoId !== currentVideoId);
+}
+
+// ブロックのチャンク時刻マークから、各セグメントの表示開始時刻を求める。
+// 均等割りではなく実際のチャンク（発話）時刻に合わせるための変換。
+function computeSegmentStartTimes(text, segments, marks) {
+  if (!Array.isArray(marks) || marks.length === 0) return null;
+  const times = [];
+  let searchFrom = 0;
+  for (const seg of segments) {
+    const idx = text.indexOf(seg, searchFrom);
+    const pos = idx >= 0 ? idx : searchFrom;
+    let t = marks[marks.length - 1].t;
+    for (const m of marks) {
+      if (m.endPos > pos) {
+        t = m.t;
+        break;
+      }
+    }
+    times.push(t);
+    searchFrom = pos + seg.length;
+  }
+  return times;
+}
+
+// セグメント開始時刻リストから、現在時刻に表示すべきセグメントindexを求める
+function getSegmentIndexFromStartTimes(videoMs, startTimes) {
+  if (!Array.isArray(startTimes) || startTimes.length === 0) return 0;
+  let idx = 0;
+  for (let i = 0; i < startTimes.length; i++) {
+    if (videoMs >= startTimes[i]) idx = i;
+    else break;
+  }
+  return idx;
+}
+
 window.SubtitleEnhancer = SubtitleEnhancer;
 window.joinCaptionSegments = joinCaptionSegments;
+window.layoutSubtitleText = layoutSubtitleText;
+window.findPhraseCutPosition = findPhraseCutPosition;
 window.normalizeCaptionNewlines = normalizeCaptionNewlines;
 window.escapeCaptionHtml = escapeCaptionHtml;
+window.getSegmentIndexForTime = getSegmentIndexForTime;
+window.computeSegmentStartTimes = computeSegmentStartTimes;
+window.getSegmentIndexFromStartTimes = getSegmentIndexFromStartTimes;
+window.shouldDiscardBlocksForVideo = shouldDiscardBlocksForVideo;

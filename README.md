@@ -64,6 +64,11 @@ youtube-subtitle-extension/
 ├── styles.css             # スタイルシート
 ├── bridge.js              # メインワールドブリッジ（PoT対応）
 ├── yse-common.js          # 共通ユーティリティ（Settings, Logger, LogPanel）
+├── vendor/
+│   ├── budoux.js          # BudouX日本語モデル（IIFEバンドル・同梱）
+│   └── LICENSE-budoux.txt # BudouXのApache-2.0ライセンス全文
+├── scripts/
+│   └── build-budoux.mjs   # vendor/budoux.js の再生成スクリプト
 ├── player-controller.js   # YouTubeプレーヤー制御
 ├── subtitle-enhancer.js   # 字幕表示改善
 ├── youtube-settings.js    # YouTube設定メニュー統合
@@ -102,6 +107,7 @@ youtube-subtitle-extension/
 ├── package-lock.json      # 依存関係ロックファイル
 ├── vitest.config.js       # Vitestテスト設定
 ├── AGENTS.md              # 開発エージェント設定
+├── THIRD_PARTY_NOTICES.md # 同梱ライブラリのライセンス表記
 ├── .gitignore             # Git管理除外設定
 ├── .env.example           # 環境変数サンプル
 └── README.md              # このファイル
@@ -218,9 +224,18 @@ convert icons/icon.svg -resize 48x48 icons/icon48.png
 convert icons/icon.svg -resize 128x128 icons/icon128.png
 ```
 
+### BudouXバンドルの再生成
+`vendor/budoux.js` は同梱済みのため、通常の拡張機能利用ではビルド不要です。
+BudouXを更新する場合だけ以下を実行します。
+```bash
+npm run build:budoux
+```
+
 ## ライセンス
 
-MIT License
+本プロジェクトのコードは ISC License（`package.json` 参照）。
+
+日本語の文節分割に [BudouX](https://github.com/google/budoux)（Copyright 2021 Google LLC、Apache License 2.0）を同梱しています。再配布時は `vendor/LICENSE-budoux.txt` と `THIRD_PARTY_NOTICES.md` を同梱してください。
 
 ## 更新履歴
 

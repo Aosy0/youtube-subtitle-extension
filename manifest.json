@@ -27,6 +27,7 @@
       ],
       "js": [
         "yse-common.js",
+        "vendor/budoux.js",
         "player-controller.js",
         "subtitle-enhancer.js",
         "youtube-settings.js",
