@@ -12,25 +12,9 @@ test-results/
 tmp-test*/
 test-profile-tmp*
 
-# テストディレクトリ全体（テストはローカルでのみ使用）
-tests/
-
-# テストツール生成物
-tools/*
-!tools/charcount.js
-!tools/debug_popup.html
-
-# デバッグ・テスト用の一時ファイル (拡張子ベース)
+# デバッグ・検証の一時ファイル
 *.py
-*.png
 *.yaml
 *.txt
-!/.env.example
-
-# 拡張機能アセットは無視から除外
-!public/icons/*.png
-
-# テスト結果・デバッグ画像
-yse-error.png
+*.png
 *.html
-!tools/debug_popup.html
