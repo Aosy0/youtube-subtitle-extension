@@ -1,9 +1,3 @@
-# IDE・エディタ設定
-.qwen/
-.claude/
-.vscode/
-debug-profile/
-
 # 環境変数（機密情報）
 .env
 
@@ -15,25 +9,16 @@ dist/
 
 # テスト生成物
 test-results/
-.playwright/
-.playwright-cli/
-.playwright-mcp/
 tmp-test*/
 test-profile-tmp*
 
 # テストディレクトリ全体（テストはローカルでのみ使用）
 tests/
 
-# OpenCode セッション継続データ
-.omo/run-continuation/
-
 # テストツール生成物
 tools/*
 !tools/charcount.js
 !tools/debug_popup.html
-
-# リンターキャッシュ
-.ruff_cache/
 
 # デバッグ・テスト用の一時ファイル (拡張子ベース)
 *.py
