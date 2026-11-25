@@ -67,6 +67,18 @@ function isManualSubtitleTrack(track) {
 }
 
 // ============================================
+// 自動ONした字幕を、音声が使用言語に戻った時点でOFFに戻すか
+// ============================================
+// 外国語音声がきっかけで自動ONした字幕だけが対象。「常にON」と
+// 「自動でONにしない」はユーザーの明示設定なので、拡張機能からは触らない。
+function shouldAutoDisableCaptions(channelMode, audioLanguage, userLanguage, autoEnabledForForeignAudio) {
+    return autoEnabledForForeignAudio === true &&
+        channelMode === 'auto' &&
+        !!audioLanguage && !!userLanguage &&
+        audioLanguage === userLanguage;
+}
+
+// ============================================
 // 設定管理（chrome.storage.local）
 // ============================================
 const Settings = {

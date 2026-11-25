@@ -12,6 +12,8 @@ const PlayerController = {
     _lastCaptionTrackKey: null,
     _captionCommandSeq: 0,
     _autoEnabledVideoId: null,
+    _autoEnabledForForeignAudio: false,
+    _autoEnableRequestedVideoId: null,
     _autoEnableTimer: null,
     _autoEnableAttempts: 0,
     _captionClickHandler: null,
@@ -54,19 +56,27 @@ const PlayerController = {
         UIController.init();
         // 優先言語の字幕トラックを選択
         this.autoSelectSubtitle();
-        this.setupCaptionManualOffListener();
+        this.setupCaptionManualToggleListener();
         this.setupVideoChangeListener();
     },
 
     // 自動ONの直後（ONを確認する前）に手動でOFFにされた場合も、その意思を尊重する。
-    // 字幕ボタンのクリック時点でONなら、これからOFFにする操作と判断できる。
-    setupCaptionManualOffListener() {
+    // 逆に手動でONにした場合は、言語による自動OFFの対象から外す。
+    // 字幕ボタンのクリック時点の状態で、これからON/OFFどちらにするかを判断できる。
+    setupCaptionManualToggleListener() {
         if (this._captionClickHandler) return;
         this._captionClickHandler = (event) => {
             const target = event.target;
             if (!target || typeof target.closest !== 'function') return;
             if (!target.closest('.ytp-subtitles-button')) return;
-            if (!this.areCaptionsOn()) return;
+            if (!this.areCaptionsOn()) {
+                this._autoEnabledForForeignAudio = false;
+                this._autoEnableRequestedVideoId = null;
+                Logger.debug('手動で字幕をONにしたため、言語による自動OFFの対象から外します');
+                return;
+            }
+            this._autoEnabledForForeignAudio = false;
+            this._autoEnableRequestedVideoId = null;
             const currentVideoId = typeof getYouTubeVideoId === 'function' ? getYouTubeVideoId() : null;
             if (!currentVideoId) return;
             const autoEnablePending = this._autoEnableTimer || this._autoEnabledVideoId === currentVideoId;
@@ -153,6 +163,8 @@ const PlayerController = {
         this._bridgeData = null;
         this._lastCaptionTrackKey = null;
         this._autoEnabledVideoId = null;
+        this._autoEnabledForForeignAudio = false;
+        this._autoEnableRequestedVideoId = null;
         this._clearAutoEnableRetry();
         Logger.info('プレーヤーコントローラーをクリーンアップしました');
     },
@@ -356,8 +368,10 @@ const PlayerController = {
         }));
     },
 
-    setSubtitlesEnabled(enabled) {
-        this._setCaptionTrack(enabled ? {} : {'languageCode': ''});
+    disableSubtitles() {
+        // YouTubeは空のトラック指定で字幕をOFFにする（languageCode:''では効かない）
+        this._lastCaptionTrackKey = null;
+        this._setCaptionTrack({});
     },
 
     setSubtitleLanguage(langCode) {
@@ -450,17 +464,38 @@ const PlayerController = {
             }
         }
 
-        // チャンネル設定と音声言語から、字幕を自動でONにするか決める。
+        // チャンネル設定と音声言語から、字幕を自動でON/OFFにするか決める。
         // 対象外のチャンネルでは字幕OFFのままにして、YouTube側の選択を尊重する。
         const captionsOn = this.areCaptionsOn();
         const channelMode = this.getChannelCaptionMode();
-        const foreignAudio = this.isForeignAudio();
+        const audioLanguage = this.getAudioLanguage();
+        const userLanguage = this.getUserLanguage();
+        const foreignAudio = !!(audioLanguage && userLanguage && audioLanguage !== userLanguage);
         const shouldAutoEnable = channelMode === 'always' || (channelMode === 'auto' && foreignAudio);
+
+        // 外国語音声できっかけを作った字幕は、同じ言語の音声に戻ったらOFFに戻す。
+        // YouTubeは字幕ONの状態を次の動画へ引き継ぐため、ここで明示的に解除する。
+        if (shouldAutoDisableCaptions(channelMode, audioLanguage, userLanguage, this._autoEnabledForForeignAudio)) {
+            this._autoEnabledForForeignAudio = false;
+            this._autoEnableRequestedVideoId = null;
+            this._autoEnabledVideoId = null;
+            this._clearAutoEnableRetry();
+            if (captionsOn) {
+                this.disableSubtitles();
+                Logger.info(`音声が使用言語に戻ったため字幕を自動でOFFにします (audio=${audioLanguage}, user=${userLanguage})`);
+                return;
+            }
+        }
 
         // 自動ONの対象チャンネルで字幕がONの状態を確認したら、この動画では
         // 以後の手動OFFを尊重する。
         if (shouldAutoEnable && captionsOn && currentVideoId) {
+            const requestedByExtension = this._autoEnableRequestedVideoId === currentVideoId;
             this._autoEnabledVideoId = currentVideoId;
+            if (requestedByExtension && foreignAudio && channelMode === 'auto') {
+                this._autoEnabledForForeignAudio = true;
+                this._autoEnableRequestedVideoId = null;
+            }
             this._clearAutoEnableRetry();
         }
 
@@ -481,6 +516,7 @@ const PlayerController = {
         if (!captionsOn) {
             // 現在の字幕トラックに関係なく、自動ONのための選択を再適用する。
             // ONになったことを確認するまでは自動ON済みにしない（失敗時に再試行する）。
+            this._autoEnableRequestedVideoId = currentVideoId;
             this._lastCaptionTrackKey = null;
             this._scheduleAutoEnableRetry();
             Logger.info(
