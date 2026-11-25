@@ -15,6 +15,9 @@ const CONFIG = {
         preferredLanguage: 'ja',
         fallbackLanguage: 'en',
         autoTranslateIfNotAvailable: true,
+        // チャンネルIDごとの自動字幕設定。未登録は 'auto'（音声が使用言語と違うときだけON）
+        // { [channelId]: { mode: 'always'|'off', title, updatedAt } }
+        channelCaptionModes: {},
         subtitleOffset: 0,
         sentenceMode: true,
         fontSize: 24,

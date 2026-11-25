@@ -90,11 +90,47 @@
         }
 
         if (playerResponse) {
+            const videoDetails = playerResponse.videoDetails || {};
+            // 現在の音声トラックの言語。自動ダブ（多言語音声）ではここが動画の音声言語になる。
+            let audioTrack = null;
+            if (player && typeof player.getAudioTrack === 'function') {
+                try { audioTrack = player.getAudioTrack(); } catch (e) {}
+            }
+            const normalizeLanguage = (value) => {
+                const raw = String(value || '').trim().toLowerCase();
+                if (!raw) return null;
+                const primary = raw.split(/[-_.]/)[0];
+                return !primary || primary === 'und' || primary === 'zxx' ? null : primary;
+            };
+            // 現在の音声トラックの言語。自動ダブでは Yb.id が「ja.3」のような言語コードを持つ。
+            // 単一音声の動画は YouTube が言語を公開しないため、自動生成字幕の言語で補う。
+            const captionList = (playerResponse.captions &&
+                playerResponse.captions.playerCaptionsTracklistRenderer &&
+                playerResponse.captions.playerCaptionsTracklistRenderer.captionTracks) || [];
+            const asrTracks = captionList.filter(t => t && t.kind === 'asr');
+            const inferredAudioLanguage = asrTracks.length === 1
+                ? asrTracks[0].languageCode
+                : null;
+            const audioLanguage = [
+                audioTrack && (audioTrack.languageCode || audioTrack.language),
+                audioTrack && audioTrack.Yb && audioTrack.Yb.id,
+                videoDetails.defaultAudioLanguage,
+                inferredAudioLanguage,
+                audioTrack && (audioTrack.audioTrackId || audioTrack.id)
+            ].map(normalizeLanguage).find(Boolean) || null;
             const payload = {
                 // 応答自身が持つvideoIdを正とする（SPA遷移中はURLと応答がずれるため）
                 videoId: (playerResponse.videoDetails && playerResponse.videoDetails.videoId) ||
                     (new URLSearchParams(location.search).get('v') || (location.pathname.match(/^\/(?:shorts|live)\/([\w-]+)/) || [])[1] || null),
-                captions: playerResponse.captions || null
+                captions: playerResponse.captions || null,
+                // 拡張側（ISOLATED world）でチャンネル別設定と自動ONの判定に使う
+                videoDetails: {
+                    channelId: videoDetails.channelId || null,
+                    channelTitle: videoDetails.channelTitle || null,
+                    defaultAudioLanguage: videoDetails.defaultAudioLanguage || null
+                },
+                audioLanguage,
+                audioTrackId: audioTrack ? (audioTrack.audioTrackId || audioTrack.id || null) : null
             };
             bridge.setAttribute('data-player-response', JSON.stringify(payload));
         }
@@ -160,5 +196,25 @@
                 detail: { requestId: e.detail?.requestId, error: err.toString() }
             }));
         }
+    });
+
+    // ==========================================
+    // プレーヤー操作（ISOLATED worldからはplayerのメソッドが見えないため）
+    // ==========================================
+    document.addEventListener('YSE_PLAYER_COMMAND', (e) => {
+        const detail = e.detail || {};
+        let result = { ok: false, error: 'unsupported command' };
+        try {
+            const player = document.querySelector('#movie_player');
+            if (detail.command === 'setCaptionTrack' && player && typeof player.setOption === 'function') {
+                player.setOption('captions', 'track', detail.args && detail.args.track ? detail.args.track : {});
+                result = { ok: true };
+            }
+        } catch (err) {
+            result = { ok: false, error: String(err) };
+        }
+        document.dispatchEvent(new CustomEvent('YSE_PLAYER_RESPONSE', {
+            detail: { requestId: detail.requestId, ...result }
+        }));
     });
 })();

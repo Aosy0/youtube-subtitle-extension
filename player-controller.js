@@ -8,6 +8,13 @@ const PlayerController = {
     _playerCheckInterval: null,
     _urlObserver: null,
     _bridgeObserver: null,
+    _bridgeData: null,
+    _lastCaptionTrackKey: null,
+    _captionCommandSeq: 0,
+    _autoEnabledVideoId: null,
+    _autoEnableTimer: null,
+    _autoEnableAttempts: 0,
+    _captionClickHandler: null,
     _initialized: false,
 
     init() {
@@ -47,7 +54,28 @@ const PlayerController = {
         UIController.init();
         // 優先言語の字幕トラックを選択
         this.autoSelectSubtitle();
+        this.setupCaptionManualOffListener();
         this.setupVideoChangeListener();
+    },
+
+    // 自動ONの直後（ONを確認する前）に手動でOFFにされた場合も、その意思を尊重する。
+    // 字幕ボタンのクリック時点でONなら、これからOFFにする操作と判断できる。
+    setupCaptionManualOffListener() {
+        if (this._captionClickHandler) return;
+        this._captionClickHandler = (event) => {
+            const target = event.target;
+            if (!target || typeof target.closest !== 'function') return;
+            if (!target.closest('.ytp-subtitles-button')) return;
+            if (!this.areCaptionsOn()) return;
+            const currentVideoId = typeof getYouTubeVideoId === 'function' ? getYouTubeVideoId() : null;
+            if (!currentVideoId) return;
+            const autoEnablePending = this._autoEnableTimer || this._autoEnabledVideoId === currentVideoId;
+            if (!autoEnablePending) return;
+            this._autoEnabledVideoId = currentVideoId;
+            this._clearAutoEnableRetry();
+            Logger.debug('手動で字幕をOFFにしたため、自動ONの再試行を停止します');
+        };
+        document.addEventListener('click', this._captionClickHandler, true);
     },
 
     setupVideoChangeListener() {
@@ -82,10 +110,24 @@ const PlayerController = {
         }
         if (this._bridgeObserver) this._bridgeObserver.disconnect();
         let lastValue = el.getAttribute('data-player-response');
+        const remember = (value) => {
+            if (!value) return;
+            try {
+                const payload = JSON.parse(value);
+                const currentVid = typeof getYouTubeVideoId === 'function' ? getYouTubeVideoId() : null;
+                if (!payload.videoId || !currentVid || payload.videoId === currentVid) {
+                    this._bridgeData = payload;
+                }
+            } catch (e) {
+                Logger.debug('ブリッジデータの解析に失敗:', e);
+            }
+        };
+        remember(lastValue);
         this._bridgeObserver = new MutationObserver(() => {
             const value = el.getAttribute('data-player-response');
             if (value && value !== lastValue) {
                 lastValue = value;
+                remember(value);
                 Logger.debug('ブリッジのプレーヤーデータが更新されました');
                 this.autoSelectSubtitle();
             }
@@ -108,6 +150,10 @@ const PlayerController = {
         }
         this.player = null;
         this.video = null;
+        this._bridgeData = null;
+        this._lastCaptionTrackKey = null;
+        this._autoEnabledVideoId = null;
+        this._clearAutoEnableRetry();
         Logger.info('プレーヤーコントローラーをクリーンアップしました');
     },
 
@@ -135,6 +181,7 @@ const PlayerController = {
                             Logger.debug(`ブリッジデータが別動画(${payload.videoId})のため無視します`);
                         } else {
                             playerResponse = payload;
+                            this._bridgeData = payload;
                             Logger.info('ブリッジ要素からplayerResponseを取得しました');
                         }
                     } catch (e) {}
@@ -208,42 +255,122 @@ const PlayerController = {
             : t);
     },
 
-    setSubtitlesEnabled(enabled) {
+    _getBridgePayload() {
+        if (!this._bridgeData) {
+            const bridge = document.getElementById('yse-data-bridge');
+            const raw = bridge && bridge.getAttribute('data-player-response');
+            if (raw) {
+                try { this._bridgeData = JSON.parse(raw); } catch (e) {}
+            }
+        }
+        const data = this._bridgeData;
+        if (!data) return null;
+        const currentVid = typeof getYouTubeVideoId === 'function' ? getYouTubeVideoId() : null;
+        if (data.videoId && currentVid && data.videoId !== currentVid) return null;
+        return data;
+    },
+
+    _normalizeLanguage(value) {
+        const raw = String(value || '').trim().toLowerCase();
+        if (!raw) return null;
+        const primary = raw.split(/[-_.]/)[0];
+        if (!primary || primary === 'und' || primary === 'zxx') return null;
+        return primary;
+    },
+
+    getUserLanguage() {
+        const raw = (typeof navigator !== 'undefined' &&
+            (navigator.language || (navigator.languages && navigator.languages[0]))) ||
+            Settings.get('preferredLanguage') || '';
+        return this._normalizeLanguage(raw);
+    },
+
+    getAudioLanguage() {
+        const data = this._getBridgePayload();
+        if (!data) return null;
+        return this._normalizeLanguage(
+            data.audioLanguage ||
+            (data.videoDetails && data.videoDetails.defaultAudioLanguage)
+        );
+    },
+
+    isForeignAudio() {
+        const audio = this.getAudioLanguage();
+        const user = this.getUserLanguage();
+        return !!(audio && user && audio !== user);
+    },
+
+    getChannelInfo() {
+        const data = this._getBridgePayload();
+        const details = (data && data.videoDetails) || {};
+        let channelId = details.channelId || null;
+        let channelTitle = details.channelTitle || null;
+        if (!channelId) {
+            const meta = document.querySelector('meta[itemprop="channelId"]');
+            if (meta && meta.content) channelId = meta.content;
+        }
+        if (!channelTitle) {
+            const nameEl = document.querySelector(
+                'ytd-watch-metadata #owner #channel-name a, ytd-video-owner-renderer #channel-name a'
+            );
+            if (nameEl) channelTitle = nameEl.textContent.trim();
+        }
+        return channelId ? { channelId, channelTitle } : null;
+    },
+
+    getChannelCaptionMode() {
+        const channel = this.getChannelInfo();
+        if (!channel) return 'auto';
+        const modes = Settings.get('channelCaptionModes') || {};
+        const entry = modes[channel.channelId];
+        return entry && (entry.mode === 'always' || entry.mode === 'off') ? entry.mode : 'auto';
+    },
+
+    areCaptionsOn() {
+        const button = document.querySelector('.ytp-subtitles-button');
+        return !!button && button.getAttribute('aria-pressed') === 'true';
+    },
+
+    _setCaptionTrack(track) {
+        const key = JSON.stringify(track || {});
+        if (key === this._lastCaptionTrackKey) {
+            Logger.debug('字幕トラックは選択済みのためスキップ');
+            return;
+        }
+        this._lastCaptionTrackKey = key;
         try {
-            const player = this.player;
-            if (player && player.setOption) {
-                player.setOption('captions', 'track', enabled ? {} : {'languageCode': ''});
+            if (this.player && typeof this.player.setOption === 'function') {
+                this.player.setOption('captions', 'track', track);
+                return;
             }
         } catch (e) {
-            Logger.error('字幕設定エラー:', e);
+            Logger.debug('直接の字幕設定に失敗したためブリッジ経由で再試行します:', e);
         }
+        this._captionCommandSeq += 1;
+        document.dispatchEvent(new CustomEvent('YSE_PLAYER_COMMAND', {
+            detail: {
+                requestId: 'yse-caption-' + Date.now() + '-' + this._captionCommandSeq,
+                command: 'setCaptionTrack',
+                args: { track }
+            }
+        }));
+    },
+
+    setSubtitlesEnabled(enabled) {
+        this._setCaptionTrack(enabled ? {} : {'languageCode': ''});
     },
 
     setSubtitleLanguage(langCode) {
-        try {
-            const player = this.player;
-            if (player && player.setOption) {
-                player.setOption('captions', 'track', {'languageCode': langCode});
-                Logger.info(`字幕言語を設定: ${langCode}`);
-            }
-        } catch (e) {
-            Logger.error('字幕言語設定エラー:', e);
-        }
+        this._setCaptionTrack({'languageCode': langCode});
+        Logger.info(`字幕言語を設定: ${langCode}`);
     },
 
     setAutoTranslation(sourceLang, targetLang) {
-        try {
-            const player = this.player;
-            if (player && player.setOption) {
-                player.setOption('captions', 'track', {
-                    'languageCode': sourceLang,
-                    'translationLanguage': {'languageCode': targetLang}
-                });
-                Logger.info(`自動翻訳を設定: ${sourceLang} → ${targetLang}`);
-            }
-        } catch (e) {
-            Logger.error('自動翻訳設定エラー:', e);
-        }
+        this._setCaptionTrack({
+            'languageCode': sourceLang,
+            'translationLanguage': {'languageCode': targetLang}
+        });
+        Logger.info(`自動翻訳を設定: ${sourceLang} → ${targetLang}`);
     },
 
     getCurrentSubtitleTrack() {
@@ -271,7 +398,35 @@ const PlayerController = {
         return !current.translationLanguage;
     },
 
-    autoSelectSubtitle() {
+    _clearAutoEnableRetry() {
+        if (this._autoEnableTimer) {
+            clearTimeout(this._autoEnableTimer);
+            this._autoEnableTimer = null;
+        }
+        this._autoEnableAttempts = 0;
+    },
+
+    // 字幕トラックがまだ用意されていない場合に備えて、少し待ってから再評価する。
+    // 字幕がONになった時点で _clearAutoEnableRetry() が試行回数を戻す。
+    _scheduleAutoEnableRetry() {
+        if (this._autoEnableTimer || this._autoEnableAttempts >= 5) return;
+        this._autoEnableTimer = setTimeout(() => {
+            this._autoEnableTimer = null;
+            this._autoEnableAttempts += 1;
+            this.autoSelectSubtitle();
+        }, 2000);
+    },
+
+    autoSelectSubtitle(force = false) {
+        if (Settings.get('enabled') === false) {
+            this._clearAutoEnableRetry();
+            return;
+        }
+        if (force) {
+            this._autoEnabledVideoId = null;
+            this._clearAutoEnableRetry();
+        }
+        const currentVideoId = typeof getYouTubeVideoId === 'function' ? getYouTubeVideoId() : null;
         const tracks = this.getSubtitleTracks();
         const preferredLang = Settings.get('preferredLanguage');
         const fallbackLang = Settings.get('fallbackLanguage');
@@ -293,6 +448,44 @@ const PlayerController = {
             if (typeof SubtitleEnhancer !== 'undefined') {
                 SubtitleEnhancer.setNativeSubtitleMode(false);
             }
+        }
+
+        // チャンネル設定と音声言語から、字幕を自動でONにするか決める。
+        // 対象外のチャンネルでは字幕OFFのままにして、YouTube側の選択を尊重する。
+        const captionsOn = this.areCaptionsOn();
+        const channelMode = this.getChannelCaptionMode();
+        const foreignAudio = this.isForeignAudio();
+        const shouldAutoEnable = channelMode === 'always' || (channelMode === 'auto' && foreignAudio);
+
+        // 自動ONの対象チャンネルで字幕がONの状態を確認したら、この動画では
+        // 以後の手動OFFを尊重する。
+        if (shouldAutoEnable && captionsOn && currentVideoId) {
+            this._autoEnabledVideoId = currentVideoId;
+            this._clearAutoEnableRetry();
+        }
+
+        if (!captionsOn && !shouldAutoEnable) {
+            Logger.debug(
+                `字幕OFFのため自動選択をスキップ (channel=${channelMode}, audio=${this.getAudioLanguage() || 'unknown'}, user=${this.getUserLanguage() || 'unknown'})`
+            );
+            return;
+        }
+
+        // 一度自動ONした動画でユーザーが字幕をOFFにしたら、その意思を尊重する。
+        // チャンネル設定を変えたときは force=true でこの抑制を解除する。
+        if (!captionsOn && !force && currentVideoId && this._autoEnabledVideoId === currentVideoId) {
+            Logger.debug('この動画では自動ON済みのため、手動OFFを尊重します');
+            return;
+        }
+
+        if (!captionsOn) {
+            // 現在の字幕トラックに関係なく、自動ONのための選択を再適用する。
+            // ONになったことを確認するまでは自動ON済みにしない（失敗時に再試行する）。
+            this._lastCaptionTrackKey = null;
+            this._scheduleAutoEnableRetry();
+            Logger.info(
+                `字幕を自動でONにします (channel=${channelMode}, audio=${this.getAudioLanguage() || 'unknown'}, user=${this.getUserLanguage() || 'unknown'})`
+            );
         }
 
         const preferredTrack = tracks.find(

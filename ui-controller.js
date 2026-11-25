@@ -108,6 +108,134 @@ const UIController = {
         }
     },
 
+    _escapeHtml(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    },
+
+    generateChannelSectionHTML() {
+        const channel = typeof PlayerController !== 'undefined' && PlayerController.getChannelInfo
+            ? PlayerController.getChannelInfo()
+            : null;
+        const mode = channel && typeof PlayerController.getChannelCaptionMode === 'function'
+            ? PlayerController.getChannelCaptionMode()
+            : 'auto';
+        const userLanguage = typeof PlayerController !== 'undefined' && PlayerController.getUserLanguage
+            ? (PlayerController.getUserLanguage() || '不明')
+            : '不明';
+        const audioLanguage = typeof PlayerController !== 'undefined' && PlayerController.getAudioLanguage
+            ? (PlayerController.getAudioLanguage() || '不明')
+            : '不明';
+        const channelName = channel ? (channel.channelTitle || channel.channelId) : '';
+        const audioKnown = audioLanguage !== '不明';
+        const options = [
+            { value: 'auto', title: '音声が違うときだけ', desc: '外国語の音声を検出すると自動でON' },
+            { value: 'always', title: '常にON', desc: '音声の言語に関係なく自動でON' },
+            { value: 'off', title: '自動でONにしない', desc: '自動ではONにしません（YouTubeの字幕設定はそのまま）' }
+        ];
+        const radios = channel
+            ? `
+                <div class="yse-channel-options">
+                    ${options.map((option) => `
+                        <label class="yse-radio-option" for="yse-channel-mode-${option.value}">
+                            <input type="radio" id="yse-channel-mode-${option.value}"
+                                name="yse-channel-caption-mode" value="${option.value}"
+                                ${mode === option.value ? 'checked' : ''}>
+                            <span class="yse-radio-copy">
+                                <span class="yse-radio-title">${option.title}</span>
+                                <span class="yse-radio-desc">${option.desc}</span>
+                            </span>
+                        </label>`).join('')}
+                </div>
+                ${channel && !audioKnown ? '<p class="yse-channel-hint">音声の言語を判定できないため、「音声が違うときだけ」では自動ONになりません。</p>' : ''}
+                <p class="yse-channel-hint" id="yse-channel-hint">設定はこのチャンネルの動画にだけ適用されます。</p>
+            `
+            : `
+                <p class="yse-channel-empty">動画を開くと、このチャンネルの設定を変更できます。</p>
+            `;
+        return `
+            <div class="yse-setting-group yse-channel-autocaption">
+                <fieldset class="yse-channel-fieldset">
+                    <legend class="yse-setting-label">このチャンネルの自動字幕</legend>
+                    <div class="yse-channel-meta">
+                        <span class="yse-channel-badge" aria-hidden="true">CC</span>
+                        <span>${channelName ? `${this._escapeHtml(channelName)} ・ ` : ''}使用言語 ${this._escapeHtml(userLanguage)} ／ 音声 ${this._escapeHtml(audioLanguage)}</span>
+                    </div>
+                    ${radios}
+                    <div class="yse-channel-saved" data-channel-modes-list aria-label="保存したチャンネル">
+                        ${this.generateChannelModesList()}
+                    </div>
+                </fieldset>
+            </div>
+        `;
+    },
+
+    generateChannelModesList() {
+        const modes = Settings.get('channelCaptionModes') || {};
+        const entries = Object.entries(modes).filter(([, entry]) =>
+            entry && (entry.mode === 'always' || entry.mode === 'off'));
+        if (entries.length === 0) return '';
+        const labels = { always: '常にON', off: '自動ONにしない' };
+        return `
+            <ul class="yse-channel-list">
+                ${entries.map(([id, entry]) => `
+                    <li class="yse-channel-list-item">
+                        <span class="yse-channel-name">${this._escapeHtml(entry.title || id)}</span>
+                        <span class="yse-channel-mode">${labels[entry.mode] || ''}</span>
+                        <button type="button" class="yse-channel-remove" data-remove-channel="${this._escapeHtml(id)}">解除</button>
+                    </li>`).join('')}
+            </ul>
+        `;
+    },
+
+    _refreshChannelModesList() {
+        const list = this.panel && this.panel.querySelector('[data-channel-modes-list]');
+        if (list) safeSetInnerHTML(list, this.generateChannelModesList());
+    },
+
+    async saveChannelCaptionMode(mode) {
+        if (typeof PlayerController === 'undefined') return;
+        const channel = PlayerController.getChannelInfo ? PlayerController.getChannelInfo() : null;
+        if (!channel || !channel.channelId) return;
+        const modes = { ...(Settings.get('channelCaptionModes') || {}) };
+        if (mode === 'auto') {
+            delete modes[channel.channelId];
+        } else {
+            modes[channel.channelId] = {
+                mode,
+                title: channel.channelTitle || '',
+                updatedAt: Date.now()
+            };
+        }
+        await Settings.set('channelCaptionModes', modes);
+        this._refreshChannelModesList();
+        if (PlayerController.autoSelectSubtitle) PlayerController.autoSelectSubtitle(true);
+        Logger.info(`チャンネル別の自動字幕を更新: ${channel.channelId} → ${mode}`);
+    },
+
+    async removeChannelCaptionMode(channelId) {
+        if (!channelId) return;
+        const modes = { ...(Settings.get('channelCaptionModes') || {}) };
+        if (!(channelId in modes)) return;
+        delete modes[channelId];
+        await Settings.set('channelCaptionModes', modes);
+        const channel = typeof PlayerController !== 'undefined' && PlayerController.getChannelInfo
+            ? PlayerController.getChannelInfo()
+            : null;
+        if (channel && channel.channelId === channelId) {
+            const auto = this.panel.querySelector('input[name="yse-channel-caption-mode"][value="auto"]');
+            if (auto) auto.checked = true;
+        }
+        this._refreshChannelModesList();
+        if (typeof PlayerController !== 'undefined' && PlayerController.autoSelectSubtitle) {
+            PlayerController.autoSelectSubtitle(true);
+        }
+    },
+
     generateSettingsHTML() {
         const pos = Settings.get('position');
         const isEnabled = Settings.get('enabled') !== false;
@@ -129,7 +257,7 @@ const UIController = {
                         <span data-enabled-label style="font-size: 16px; font-weight: bold; color: ${isEnabled ? '#4caf50' : '#f44336'};">拡張機能: ${isEnabled ? 'ON' : 'OFF'}</span>
                     </label>
                     <small style="color: #888; font-size: 12px; display: block; margin-top: 8px; padding-left: 32px;">
-                        OFFにすると字幕表示干预を停止します（YouTube本身的字幕は引き続き表示）
+                        OFFにすると字幕の加工を停止します。YouTube標準の字幕はそのまま表示されます。
                     </small>
                 </div>
 
@@ -151,6 +279,8 @@ const UIController = {
                         <span>字幕がない場合は自動翻訳を使用</span>
                     </label>
                 </div>
+
+                ${this.generateChannelSectionHTML()}
 
                 <div style="border-top: 1px solid #444; margin: 16px 0;"></div>
 
@@ -375,6 +505,19 @@ const UIController = {
                     }
                 }
             });
+        });
+
+        this.panel.querySelectorAll('input[name="yse-channel-caption-mode"]').forEach(input => {
+            input.addEventListener('change', () => {
+                if (input.checked) this.saveChannelCaptionMode(input.value);
+            });
+        });
+
+        this.panel.addEventListener('click', (e) => {
+            const removeButton = e.target.closest('[data-remove-channel]');
+            if (!removeButton) return;
+            e.preventDefault();
+            this.removeChannelCaptionMode(removeButton.getAttribute('data-remove-channel'));
         });
 
         this.panel.addEventListener('click', (e) => {

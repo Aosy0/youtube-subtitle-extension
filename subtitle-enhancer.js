@@ -36,6 +36,7 @@ const SubtitleEnhancer = {
   _segmentStartTimes: null,
   _pendingTruncationCheck: false,
   _resizeObserver: null,
+  _measureContext: null,
   nativeSubtitleMode: false,
   _nativeStyleElement: null,
   currentSubtitleLanguage: null,
@@ -1017,15 +1018,19 @@ const SubtitleEnhancer = {
     if (!element || !element.parentElement) return false;
 
     const clone = element.cloneNode(true);
-    const parentWidth = element.parentElement.clientWidth;
+    // textElement の clientWidth が実際に使える本文幅（overlay の padding を含めない）
+    const parentWidth = element.clientWidth || element.parentElement.clientWidth;
+    const computed = getComputedStyle(element);
     clone.style.cssText = `
       position: absolute !important;
       visibility: hidden !important;
       display: block !important;
       width: ${parentWidth}px !important;
-      font-size: ${getComputedStyle(element).fontSize} !important;
-      line-height: ${getComputedStyle(element).lineHeight} !important;
-      font-family: ${getComputedStyle(element).fontFamily} !important;
+      font-size: ${computed.fontSize} !important;
+      line-height: ${computed.lineHeight} !important;
+      font-family: ${computed.fontFamily} !important;
+      font-weight: ${computed.fontWeight} !important;
+      letter-spacing: ${computed.letterSpacing} !important;
       word-break: keep-all !important;
       overflow: visible !important;
       white-space: normal !important;
@@ -1040,10 +1045,46 @@ const SubtitleEnhancer = {
     return actualLines > maxLines;
   },
 
+  _getAvailableTextWidth() {
+    if (!this.playerContainer) return 0;
+    const playerWidth = this.playerContainer.clientWidth || 0;
+    if (!playerWidth) return 0;
+    const percent = Math.min(100, Math.max(10, Number(Settings.get("captionWidth")) || 80));
+    return Math.max(0, Math.floor((playerWidth * percent) / 100) - 2);
+  },
+
+  _measureTextWidth(text) {
+    const value = String(text || "");
+    if (!value) return 0;
+    if (!this._measureContext) {
+      try {
+        this._measureContext = document.createElement("canvas").getContext("2d");
+      } catch (_) {
+        this._measureContext = null;
+      }
+    }
+    if (!this._measureContext) return 0;
+    const fontSize = Number(Settings.get("fontSize")) || 24;
+    const weightMap = { normal: "400", bold: "700", lighter: "300" };
+    const fontWeight = weightMap[String(Settings.get("fontWeight"))] ||
+      String(Settings.get("fontWeight") || 400);
+    const fontFamily = String(Settings.get("fontFamily") || "sans-serif");
+    this._measureContext.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+    const letterSpacing = Number(Settings.get("letterSpacing")) || 0;
+    return this._measureContext.measureText(value).width +
+      Math.max(0, value.length - 1) * letterSpacing;
+  },
+
   _splitIntoSegments(text, maxLines) {
-    // 文字数ではなくBudouXの文節境界を優先して分割する
-    // （maxLinesは呼び出し互換のため残している）
-    return layoutSubtitleText(text, 40, "segments");
+    // プレイヤー幅に収まる行を maxLines 行ずつまとめてセグメントにする。
+    // 確定した各行を保持し、表示時はそのまま使う（再折り返しで行数が増えないように）。
+    return layoutSubtitleSegmentsToWidth(
+      text,
+      this._getAvailableTextWidth(),
+      maxLines,
+      (value) => this._measureTextWidth(value),
+      50,
+    );
   },
 
   displaySentence(text, forcedMaxLines) {
@@ -1098,7 +1139,11 @@ const SubtitleEnhancer = {
     if (block) {
       this._segmentBlockStart = block.start;
       this._segmentBlockEnd = block.end;
-      this._segmentStartTimes = computeSegmentStartTimes(text, segments, block.marks);
+      this._segmentStartTimes = computeSegmentStartTimes(
+        text,
+        segments.map((segment) => segment.text),
+        block.marks
+      );
     } else {
       this._segmentStartTimes = null;
     }
@@ -1124,10 +1169,16 @@ const SubtitleEnhancer = {
     if (idx === this._segmentIndex) return;
     this._segmentIndex = idx;
     if (this.textElement) {
-      safeSetInnerHTML(
-        this.textElement,
-        escapeCaptionHtml(this._currentSegments[idx].trim()).replace(/\n/g, "<br>")
-      );
+      const segment = this._currentSegments[idx];
+      // 分割時に確定した行をそのまま使う。ここで再レイアウトすると
+      // 文字幅の推定誤差で maxLines を超えることがある。
+      const lines = segment.lines && segment.lines.length
+        ? segment.lines
+        : [segment.text];
+      const formatted = lines
+        .map((line) => escapeCaptionHtml(String(line).trim()))
+        .join("<br>");
+      safeSetInnerHTML(this.textElement, formatted || escapeCaptionHtml(segment.text));
     }
   },
 
@@ -1135,9 +1186,18 @@ const SubtitleEnhancer = {
     const target = text.trim();
     if (!target) return "";
 
-    // 文単位に分けたうえで、50文字を超える文はBudouXの文節境界で折る
+    // プレイヤーの実幅に収まる文字数を推定し、その範囲で文節境界を優先して折る。
+    // 単体テストのように this が無い場合は従来の50文字折り返しにフォールバックする。
     // （maxLinesは呼び出し互換のため残している）
-    const lines = layoutSubtitleText(target, 50, "lines");
+    const width = this && typeof this._getAvailableTextWidth === "function"
+      ? this._getAvailableTextWidth()
+      : 0;
+    const measure = this && typeof this._measureTextWidth === "function"
+      ? (value) => this._measureTextWidth(value)
+      : null;
+    const lines = width > 0 && measure && typeof layoutSubtitleLinesToWidth === "function"
+      ? layoutSubtitleLinesToWidth(target, width, measure, 50)
+      : layoutSubtitleText(target, 50, "lines");
     return lines.map((line) => escapeCaptionHtml(line.trim())).join("<br>");
   },
 
@@ -1277,6 +1337,11 @@ const SubtitleEnhancer = {
       this.yseOverlay.style.marginRight = "auto";
     }
     this.applyCustomStyles();
+    // フォントサイズ・字幕幅・最大行数の変更を、表示中の字幕にも即座に反映する
+    if (this.currentSentence && this.isSubtitleEnabled &&
+        Settings.get("enabled") !== false && !this.nativeSubtitleMode) {
+      this.displaySentence(this.currentSentence);
+    }
   },
 
   hideOriginalCaptions(hide) {
@@ -1571,6 +1636,110 @@ function layoutSubtitleText(text, maxLen = 50, mode = "lines") {
   return out;
 }
 
+// 行の最大幅を測る（measureWidth が無い場合は 0）
+function measureMaxLineWidth(lines, measureWidth) {
+  let maxWidth = 0;
+  for (const line of lines) {
+    const width = measureWidth(line);
+    if (width > maxWidth) maxWidth = width;
+  }
+  return maxWidth;
+}
+
+/**
+ * 利用可能な幅と実測文字幅から、1行あたりの文字数予算を推定する。
+ * measureWidth が使えない場合は fallbackMaxLen を返す（従来の固定文字数）。
+ */
+function estimateCharBudget(text, availableWidth, measureWidth, fallbackMaxLen = 50) {
+  const target = String(text || "");
+  const fallback = Math.max(1, Math.floor(Number(fallbackMaxLen) || 50));
+  if (!target || !(availableWidth > 0) || typeof measureWidth !== "function") {
+    return fallback;
+  }
+  // 長文全体を測ると重いので、先頭200文字の平均文字幅から1行の文字数を推定する
+  const sample = target.slice(0, 200);
+  const sampleWidth = measureWidth(sample);
+  if (!(sampleWidth > 0)) return fallback;
+  const budget = Math.floor((availableWidth * 0.98) / (sampleWidth / sample.length));
+  return Math.max(1, Math.min(target.length, budget));
+}
+
+/**
+ * プレイヤーの実幅に収まるように字幕テキストを行へ折る。
+ * 推定予算でレイアウトし、実測幅がはみ出したら予算を縮めて最大5回やり直す。
+ */
+function layoutSubtitleLinesToWidth(text, availableWidth, measureWidth, fallbackMaxLen = 50) {
+  const target = String(text || "").trim();
+  if (!target) return [];
+  if (!(availableWidth > 0) || typeof measureWidth !== "function") {
+    return layoutSubtitleText(target, fallbackMaxLen, "lines");
+  }
+  let budget = estimateCharBudget(target, availableWidth, measureWidth, fallbackMaxLen);
+  let lines = layoutSubtitleText(target, budget, "lines");
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const maxWidth = measureMaxLineWidth(lines, measureWidth);
+    if (maxWidth <= availableWidth || budget <= 1) break;
+    const next = Math.max(1, Math.floor(budget * (availableWidth / maxWidth) * 0.97));
+    if (next >= budget) break;
+    budget = next;
+    lines = layoutSubtitleText(target, budget, "lines");
+  }
+  return lines;
+}
+
+/**
+ * 幅に収まる行を maxLines 行ずつまとめ、元テキストの連続部分列と
+ * 表示用の行を返す。表示側で再折り返しすると maxLines を超えることが
+ * あるため、確定した行をセグメントごとに保持する。
+ * @returns {{text: string, lines: string[]}[]}
+ */
+function layoutSubtitleSegmentsToWidth(text, availableWidth, maxLines, measureWidth, fallbackMaxLen = 50) {
+  const target = String(text || "").trim();
+  if (!target) return [];
+  const lineLimit = Math.max(1, Math.floor(Number(maxLines) || 1));
+  if (!(availableWidth > 0) || typeof measureWidth !== "function") {
+    return layoutSubtitleText(target, fallbackMaxLen, "segments").map((segment) => ({
+      text: segment,
+      lines: layoutSubtitleText(segment, fallbackMaxLen, "lines"),
+    }));
+  }
+  const lines = layoutSubtitleLinesToWidth(target, availableWidth, measureWidth, fallbackMaxLen);
+  if (lines.length <= lineLimit) return [{ text: target, lines }];
+
+  // 行の開始位置を前回位置から順に求め、同じ文言が繰り返されても取り違えない
+  const positions = [];
+  let cursor = 0;
+  for (const line of lines) {
+    const found = target.indexOf(line, cursor);
+    const start = found >= 0 ? found : cursor;
+    positions.push({ start, end: start + line.length });
+    cursor = start + line.length;
+  }
+
+  const segments = [];
+  for (let i = 0; i < positions.length; i += lineLimit) {
+    const end = Math.min(i + lineLimit, positions.length);
+    const first = positions[i];
+    const last = positions[end - 1];
+    const segment = target.slice(first.start, last.end).trim();
+    if (segment) segments.push({ text: segment, lines: lines.slice(i, end) });
+  }
+  return segments;
+}
+
+/**
+ * セグメントの文字列だけを返す互換API。
+ */
+function splitSubtitleSegmentsToWidth(text, availableWidth, maxLines, measureWidth, fallbackMaxLen = 50) {
+  return layoutSubtitleSegmentsToWidth(
+    text,
+    availableWidth,
+    maxLines,
+    measureWidth,
+    fallbackMaxLen
+  ).map((segment) => segment.text);
+}
+
 /**
  * 80文字超で文末が無いブロックを、日本語の文節境界で切る位置を返す。
  * BudouXが無い、または境界が見つからない場合は -1（従来動作）。
@@ -1683,6 +1852,10 @@ function getSegmentIndexFromStartTimes(videoMs, startTimes) {
 window.SubtitleEnhancer = SubtitleEnhancer;
 window.joinCaptionSegments = joinCaptionSegments;
 window.layoutSubtitleText = layoutSubtitleText;
+window.estimateCharBudget = estimateCharBudget;
+window.layoutSubtitleLinesToWidth = layoutSubtitleLinesToWidth;
+window.layoutSubtitleSegmentsToWidth = layoutSubtitleSegmentsToWidth;
+window.splitSubtitleSegmentsToWidth = splitSubtitleSegmentsToWidth;
 window.findPhraseCutPosition = findPhraseCutPosition;
 window.normalizeCaptionNewlines = normalizeCaptionNewlines;
 window.escapeCaptionHtml = escapeCaptionHtml;
