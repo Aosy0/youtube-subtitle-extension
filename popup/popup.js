@@ -48,7 +48,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             position: position.value
         };
 
-        await chrome.storage.local.set({ yse_settings: newSettings });
+        // ポップアップが持つ項目だけを上書きし、チャンネル別設定など他の項目は残す
+        const currentSettings = await loadSettings();
+        await chrome.storage.local.set({ yse_settings: { ...currentSettings, ...newSettings } });
         saveBtn.textContent = '保存完了!';
         setTimeout(() => { saveBtn.textContent = '保存'; }, 1500);
 
